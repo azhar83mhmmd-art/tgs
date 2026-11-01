@@ -12,7 +12,7 @@ Frontend statis (HTML/CSS/JS murni) + Supabase (Auth, Postgres + RLS, Realtime, 
 ```
 index.html  style.css  v3.css  sw.js  manifest.webmanifest  vercel.json
 js/         config · util · data(realtime) · auth · views-* · chatbot · main
-sql/        SQL per fitur (00–09), dijalankan berurutan, masing-masing idempotent
+sql/        SQL per fitur (00–12), dijalankan berurutan, masing-masing idempotent
 supabase/functions/send-push   Web Push ke HP (notifikasi saat website ditutup)
 tests/db    uji database (psql)      tests/ui   uji UI (Playwright)
 ```
