@@ -47,6 +47,21 @@ function getCountdown(iso) {
   return { text: `${d} hari lagi`, type: d <= 2 ? 'warning' : 'normal' };
 }
 
+/* Countdown detail untuk modal tugas. Selalu dihitung dari deadline asli (timestamptz di database).
+   Warna: >3 hari normal (ungu/biru) | 1–3 hari warn (kuning) | <24 jam soon (oranye) | <3 jam urgent (merah) | lewat expired (abu-abu) */
+function getDeadlineInfo(iso, now = Date.now()) {
+  const diff = new Date(iso) - now;
+  if (!(diff > 0)) return { text: 'Deadline telah berakhir', type: 'expired', expired: true, diff: 0 };
+  const mins = Math.floor(diff / 60000), d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+  const p2 = n => String(n).padStart(2, '0');
+  let text;
+  if (d > 0) text = `${d} hari ${p2(h)} jam ${p2(m)} menit`;
+  else if (h > 0) text = `${h} jam ${p2(m)} menit`;
+  else text = mins < 1 ? 'Kurang dari 1 menit lagi' : `${m} menit lagi`;
+  const type = diff > 3 * 86400000 ? 'normal' : diff >= 86400000 ? 'warn' : diff >= 3 * 3600000 ? 'soon' : 'urgent';
+  return { text, type, expired: false, diff };
+}
+
 const avatarChar = n => (n || '?').trim().charAt(0).toUpperCase();
 function gradientFor(s) {
   const g = ['#4f46e5,#7c3aed','#0ea5e9,#2563eb','#10b981,#059669','#f59e0b,#d97706','#ef4444,#dc2626','#ec4899,#db2777'];
@@ -64,23 +79,38 @@ const debounce = (fn, ms = 200) => { let t; return (...a) => { clearTimeout(t); 
 
 /* ===== Toast ===== */
 function showToast(msg, type = 'info') {
-  const icons = { success: '✅', error: '❌', info: 'ℹ️', warning: '⚠️' };
+  const svg = p => `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${p}</svg>`;
+  const icons = {
+    success: svg('<circle cx="12" cy="12" r="10"/><path d="m8 12.5 2.8 2.8L16 9.5"/>'),
+    error:   svg('<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/>'),
+    info:    svg('<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>'),
+    warning: svg('<path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>'),
+  };
   const t = document.createElement('div');
   t.className = `toast ${type}`;
-  t.innerHTML = `<span>${icons[type] || ''}</span> <span>${esc(msg)}</span>`;
+  t.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  t.innerHTML = `<span class="toast-ic">${icons[type] || ''}</span> <span>${esc(msg)}</span>`;
   $('#toastContainer').appendChild(t);
   setTimeout(() => { t.style.animation = 'toastOut .3s ease forwards'; setTimeout(() => t.remove(), 300); }, 3800);
 }
 
 /* ===== Modal & konfirmasi ===== */
+/* Pembersih modal (timer countdown, overlay perayaan, dll). Didaftarkan oleh modal yang membutuhkannya. */
+const modalCleanups = [];
+function runModalCleanups() { while (modalCleanups.length) { try { modalCleanups.pop()(); } catch {} } }
 function openModal(html, opts = {}) {
   const ov = $('#modalOverlay');
+  runModalCleanups();
   $('#modalContent').innerHTML = html;
-  $('.modal', ov).classList.toggle('modal-wide', !!opts.wide);
+  const m = $('.modal', ov);
+  m.classList.toggle('modal-wide', !!opts.wide);
+  m.classList.toggle('modal-task', !!opts.task);
+  ov.classList.toggle('has-task', !!opts.task);
   ov.classList.remove('hidden');
   document.body.classList.add('modal-open');
 }
 function closeModal() {
+  runModalCleanups();
   $('#modalOverlay').classList.add('hidden');
   document.body.classList.remove('modal-open');
 }
