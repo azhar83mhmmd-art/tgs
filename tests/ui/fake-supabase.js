@@ -142,6 +142,7 @@
     if (fn === 'regenerate_join_code') { const c = db.classes.find(x => x.id === a.p_class); c.join_code = 'NEWCODE' + Math.floor(Math.random() * 10); save(); return { data: c.join_code, error: null }; }
     if (fn === 'run_my_reminders') { (window.__rpcCalls = window.__rpcCalls || []).push(fn); return { data: { student_notifications: 0, exam_notifications: 0, errors: 0 }, error: null }; }
     if (fn === 'reminder_diagnostics') return { data: { cron_installed: false, job: null, last_runs: [], last_run_at: null, reminder_enabled: true, open_tasks: 2, my_reminders: 0, skipped_by_setting: 0 }, error: null };
+    if (fn === 'reminder_explain') return { data: { now_wib: '21:30', remind_at: '21:28', tasks: [{ title: 'Soal Bab 3', subject: 'IPA', deadline: new Date(Date.now() + 86400000).toISOString(), days_left: 1, too_new: false, log: null }] }, error: null };
     if (fn === 'push_diagnostics') return { data: { url_set: true, secret_set: true, pg_net: true, my_subscriptions: 0, last_responses: [] }, error: null };
     return { data: null, error: { message: 'rpc tidak dikenal: ' + fn } };
   };
