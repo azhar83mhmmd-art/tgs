@@ -119,6 +119,8 @@ const ok = (c, m) => { if (c) { pass++; console.log('ok   ' + m); } else { fail.
   await s.click('[data-action="pushDiag"]'); await s.waitForSelector('.diag-list');
   const diagTxt = await s.locator('.diag-list').innerText();
   ok(diagTxt.includes('Penjadwal pengingat') && diagTxt.includes('MATI'), 'diagnosis: status pg_cron pengingat tampil (MATI terdeteksi)');
+  const modalTxt = await s.locator('#modalOverlay .modal').innerText();
+  ok(modalTxt.includes('Soal Bab 3') && modalTxt.includes('Seharusnya sudah dikirim'), 'diagnosis: alasan per tugas (jam lewat, belum tercatat)');
   ok((await s.locator('[data-action="remindNow"]').count()) === 1, 'diagnosis: tombol "Periksa pengingat sekarang" untuk siswa');
   const callsBefore = await s.evaluate(() => window.__rpcCalls.length);
   await s.click('[data-action="remindNow"]'); await s.waitForTimeout(300);
