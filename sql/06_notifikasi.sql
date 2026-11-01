@@ -58,6 +58,9 @@ create table if not exists public.notification_settings (
   updated_at   timestamptz not null default now()
 );
 
+-- Jam pengingat deadline pilihan pengguna (WIB). null = pakai app_config.reminder_hour (bawaan 07:00).
+alter table public.notification_settings add column if not exists reminder_time time;
+
 create table if not exists public.push_subscriptions (
   id         uuid primary key default gen_random_uuid(),
   user_id    uuid not null references public.profiles(id) on delete cascade,
@@ -136,6 +139,8 @@ language sql stable set search_path = public, pg_temp as $$
 $$;
 
 -- Satu pintu pembuatan notifikasi: cek pengaturan pengguna, cegah duplikat, catat riwayat.
+-- Catatan: catatan "dilewati" (pengaturan dimatikan) TIDAK boleh menghalangi pengiriman setelah pengaturan
+-- dihidupkan lagi -> saat pengaturan aktif, catatan dilewati yang lama ditandai superseded lebih dulu.
 create or replace function public.push_notification(
   p_user uuid, p_type text, p_title text, p_body text,
   p_class uuid, p_ref uuid, p_setting text, p_data jsonb default '{}'::jsonb
@@ -147,6 +152,12 @@ begin
     select coalesce((to_jsonb(s) ->> p_setting)::boolean, true) into v_enabled
       from public.notification_settings s where s.user_id = p_user;
     v_enabled := coalesce(v_enabled, true);
+  end if;
+
+  if v_enabled then
+    update public.notification_logs set superseded_at = now()
+     where user_id = p_user and kind = p_type and ref_id = p_ref and channel = 'in_app'
+       and status = 'skipped' and superseded_at is null;
   end if;
 
   insert into public.notification_logs (user_id, class_id, kind, ref_id, channel, status, detail)
