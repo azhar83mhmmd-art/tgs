@@ -1859,3 +1859,10 @@ body {
 #section-buatPengumuman .form-card textarea {
   min-height: 120px;
 }
+
+/* Banner ajakan aktifkan notifikasi latar belakang */
+.push-banner{position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));z-index:900;display:flex;align-items:center;gap:12px;
+  padding:12px 14px;border-radius:16px;background:#4f46e5;color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.28);max-width:520px;margin:0 auto}
+.push-banner>i{font-size:20px}.push-banner>div{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.push-banner small{opacity:.85;font-size:12px}
+.push-banner .btn-primary{background:#fff;color:#4f46e5}.push-banner .btn-icon{color:#fff;background:transparent}
