@@ -48,18 +48,31 @@ async function handleDaftar() {
     const { data: free } = await sb.rpc('username_available', { p_username: username });
     if (free === false) throw new Error('Username sudah digunakan, coba yang lain!');
     try { localStorage.setItem('tk_remember', '1'); } catch {}
-    const { data, error } = await sb.auth.signUp({
-      email: emailOf(username), password,
-      options: { data: { username, full_name: nama, role, teacher_code: role === 'guru' ? kode : undefined } },
-    });
-    if (error) {
-      const m = error.message.toLowerCase();
-      throw new Error(m.includes('database error') ? 'Gagal membuat akun. Pastikan kode guru benar dan username belum dipakai.'
-        : m.includes('already') ? 'Username sudah digunakan, coba yang lain!' : errMsg(error));
+    // Jalur utama: buat akun lewat RPC (tanpa email apa pun -> tidak kena "email invalid"/"rate limit").
+    let created = false;
+    const rpc = await sb.rpc('register_account', {
+      p_username: username, p_full_name: nama, p_password: password, p_role: role,
+      p_teacher_code: role === 'guru' ? kode : null });
+    if (!rpc.error) created = true;
+    else if (!/could not find the function|schema cache|PGRST202|42883/i.test(`${rpc.error.code} ${rpc.error.message}`))
+      throw new Error(rpc.error.message);          // mis. kode guru salah / username dipakai
+    if (!created) {                                // cadangan: sql/10 belum dijalankan -> signUp biasa
+      const { data, error } = await sb.auth.signUp({
+        email: emailOf(username), password,
+        options: { data: { username, full_name: nama, role, teacher_code: role === 'guru' ? kode : undefined } },
+      });
+      if (error) {
+        const m = error.message.toLowerCase();
+        throw new Error(m.includes('rate limit') || m.includes('invalid') && m.includes('email')
+          ? 'Server menolak pengiriman email konfirmasi. Jalankan sql/10_daftar_tanpa_email.sql di Supabase SQL Editor (atau matikan "Confirm email" di Auth → Providers → Email), lalu coba lagi.'
+          : m.includes('database error') ? 'Gagal membuat akun. Pastikan kode guru benar dan username belum dipakai.'
+          : m.includes('already') ? 'Username sudah digunakan, coba yang lain!' : errMsg(error));
+      }
+      if (data.session) created = 'session';
     }
-    if (!data.session) {                       // "Confirm email" aktif di Supabase
+    if (created !== 'session') {
       const r = await sb.auth.signInWithPassword({ email: emailOf(username), password });
-      if (r.error) throw new Error('Akun dibuat, tetapi login otomatis gagal. Matikan "Confirm email" di Supabase lalu masuk manual.');
+      if (r.error) throw new Error('Akun dibuat, tetapi login otomatis gagal. Silakan masuk lewat tab Masuk.');
     }
     if (role === 'siswa' && kodeKelas) {
       const r = await sb.rpc('join_class', { p_code: kodeKelas });
