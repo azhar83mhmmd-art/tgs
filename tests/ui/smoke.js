@@ -48,12 +48,52 @@ const ok = (c, m) => { if (c) { pass++; console.log('ok   ' + m); } else { fail.
   ok((await s.evaluate(() => __fakeDB().task_status.find(x => x.task_id === 't3' && x.student_id === 's1')?.is_done)) === true, 'status tersimpan ke database');
   await s.locator('.task-card', { hasText: 'Esai Bahasa' }).locator('.btn-status').click(); await s.waitForTimeout(300);
   ok((await s.evaluate(() => __fakeDB().task_status.find(x => x.task_id === 't3' && x.student_id === 's1')?.is_done)) === false, 'ubah kembali ke Belum Selesai tersimpan');
-  // modal detail
-  await s.locator('.task-card', { hasText: 'Laporan' }).click(); await s.waitForSelector('.status-choice');
-  ok((await s.locator('.status-choice .choice.active.todo').count()) === 1, 'modal: pilihan status ✓ / ○ tampil');
-  await s.click('.status-choice .choice >> nth=0'); await s.waitForTimeout(300);
-  ok((await s.locator('.status-choice .choice.active.done').count()) === 1, 'modal: memilih Sudah Selesai');
-  ok((await s.evaluate(() => __fakeDB().activity_logs.some(a => a.action === 'view_task' && a.user_id === 's1'))), 'membuka detail tugas tercatat di activity log');
+  // modal detail (redesign): 3 status, countdown, progress, riwayat, aksi
+  await s.locator('.task-card', { hasText: 'Laporan' }).click(); await s.waitForSelector('.td-seg');
+  ok((await txt(s, '#tdPillWrap')).includes('Belum Dikerjakan'), 'modal: pill status awal = Belum Dikerjakan');
+  ok(/(hari|jam|menit)/.test(await txt(s, '#tdCdText')), 'modal: countdown tampil dari deadline asli');
+  ok(/WIB/.test(await txt(s, '.td-cd-date')), 'modal: deadline menampilkan jam & zona waktu');
+  ok((await s.locator('.td-cd.normal, .td-cd.warn').count()) === 1, 'modal: warna countdown 2–3 hari (kuning/ungu)');
+  ok((await s.locator('.td-seg-btn').count()) === 3, 'modal: 3 pilihan status');
+  const cd0 = await txt(s, '#tdCdText'); ok((await s.locator('.td').getAttribute('data-task')) === 't1', 'modal: data-task terpasang');
+  // Gagal simpan -> tampilan TIDAK berubah, pesan error tampil
+  await s.evaluate(() => { window.__failStatusSave = true; });
+  await s.click('.td-seg-btn[data-status="proses"]'); await s.waitForSelector('#tdErr:not(.hidden)');
+  ok((await s.locator('.td-seg[data-s="belum"]').count()) === 1 && (await txt(s, '#tdPct')) === '0%', 'modal: gagal simpan -> status di tampilan tidak berubah');
+  ok((await txt(s, '#tdErr')).includes('Gagal menyimpan'), 'modal: pesan error tampil');
+  ok((await s.locator('.toast.error').count()) >= 1, 'modal: toast error tampil');
+  ok((await s.evaluate(() => (__fakeDB().task_status.find(x => x.task_id === 't1' && x.student_id === 's1') || null))) === null, 'modal: gagal simpan -> database tidak berubah');
+  await s.evaluate(() => { window.__failStatusSave = false; });
+  // Sedang Dikerjakan
+  await s.click('.td-seg-btn[data-status="proses"]'); await s.waitForSelector('.td-seg[data-s="proses"]');
+  ok((await s.evaluate(() => __fakeDB().task_status.find(x => x.task_id === 't1' && x.student_id === 's1')?.status)) === 'proses', 'modal: Sedang Dikerjakan tersimpan ke database');
+  ok((await txt(s, '#tdPct')) === '50%' && (await s.locator('.td-prog-fill').evaluate(e => e.style.width)) === '50%', 'modal: progress 50%');
+  ok((await s.locator('#tdErr.hidden').count()) === 1, 'modal: pesan error hilang setelah berhasil');
+  ok((await txt(s, '#tdPillWrap')).includes('Sedang Dikerjakan'), 'modal: pill status ikut berubah');
+  ok((await s.locator('.td-celebrate').count()) === 0, 'modal: tidak ada perayaan untuk status selain Selesai');
+  // Sudah Selesai -> animasi + confetti + pesan apresiasi
+  await s.click('.td-seg-btn[data-status="selesai"]'); await s.waitForSelector('.td-celebrate');
+  ok((await txt(s, '.td-cele-msg')).includes('Hebat! Satu tugas berhasil diselesaikan.'), 'modal: pesan apresiasi tampil');
+  ok((await s.locator('.td-confetti i').count()) > 10, 'modal: confetti ringan tampil');
+  ok((await s.evaluate(() => { const r = __fakeDB().task_status.find(x => x.task_id === 't1' && x.student_id === 's1'); return r.is_done === true && r.status === 'selesai'; })), 'modal: Sudah Selesai tersimpan (is_done tetap sinkron)');
+  ok((await txt(s, '#tdPct')) === '100%', 'modal: progress 100%');
+  // Persisten setelah muat ulang
+  await s.reload(); await s.waitForSelector('#appPage.active'); await s.waitForSelector('.task-card');
+  await s.locator('.task-card', { hasText: 'Laporan' }).click(); await s.waitForSelector('.td-seg[data-s="selesai"]');
+  ok(true, 'modal: status tetap tersimpan setelah halaman dimuat ulang');
+  // Riwayat
+  await s.click('#tdHistBtn'); await s.waitForSelector('.td-hi');
+  ok((await s.locator('.td-hi').count()) === 2, 'riwayat: 2 perubahan tercatat (belum>proses, proses>selesai)');
+  ok((await txt(s, '.td-hi-meta')).includes('Kamu'), 'riwayat: identitas pengubah tampil');
+  ok((await s.locator('.td-hi .td-chip').allInnerTexts()).join('|').includes('Sedang Dikerjakan'), 'riwayat: status lama & baru tampil');
+  // Salin & kalender
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await s.click('[data-action="tdCopy"]'); await s.waitForSelector('.toast.success:has-text("disalin")');
+  const clip = await s.evaluate(() => navigator.clipboard.readText());
+  ok(clip.includes('Laporan <b>IPA</b>') && clip.includes('Deadline:') && clip.includes('Status: Sudah Selesai'), 'salin: isi detail tugas benar');
+  const [dl] = await Promise.all([s.waitForEvent('download'), s.click('[data-action="tdCal"]')]);
+  const ics = fs.readFileSync(await dl.path(), 'utf8');
+  ok(dl.suggestedFilename().endsWith('.ics') && ics.includes('BEGIN:VEVENT') && ics.includes('SUMMARY:Deadline IPA') && /DTSTART:\d{8}T\d{6}Z/.test(ics) && ics.includes('BEGIN:VALARM'), 'kalender: file .ics valid (event + alarm)');
   await s.screenshot({ path: OUT + '/02-modal-siswa.png' });
   await s.keyboard.press('Escape');
   // filter
@@ -67,6 +107,23 @@ const ok = (c, m) => { if (c) { pass++; console.log('ok   ' + m); } else { fail.
   ok((await s.locator('.notif-card.unread').count()) === 2, 'pusat notifikasi: 2 belum dibaca');
   ok((await s.locator('.nav-badge[data-badge="notif"]').first().innerText()) === '2', 'badge notifikasi = 2');
   await s.screenshot({ path: OUT + '/03-notifikasi.png' });
+  // pengingat deadline: cadangan klien + diagnosis
+  ok((await s.evaluate(() => (window.__rpcCalls || []).filter(f => f === 'run_my_reminders').length)) >= 1, 'pengingat cadangan: run_my_reminders dipanggil saat siswa membuka aplikasi');
+  ok((await s.inputValue('#reminderTime')) === '07:00', 'jam pengingat: bawaan 07:00');
+  const callsT = await s.evaluate(() => (window.__rpcCalls || []).length);
+  await s.fill('#reminderTime', '05:30'); await s.waitForTimeout(400);
+  ok(await s.evaluate(() => __fakeDB().notification_settings.some(x => String(x.reminder_time) === '05:30')), 'jam pengingat 05:30 tersimpan ke notification_settings');
+  ok((await s.evaluate(() => (window.__rpcCalls || []).length)) === callsT + 1, 'ganti jam pengingat langsung memeriksa pengingat tertunda');
+  await s.reload(); await s.waitForSelector('#reminderTime');
+  ok((await s.inputValue('#reminderTime')) === '05:30', 'jam pengingat tetap 05:30 setelah dimuat ulang');
+  await s.click('[data-action="pushDiag"]'); await s.waitForSelector('.diag-list');
+  const diagTxt = await s.locator('.diag-list').innerText();
+  ok(diagTxt.includes('Penjadwal pengingat') && diagTxt.includes('MATI'), 'diagnosis: status pg_cron pengingat tampil (MATI terdeteksi)');
+  ok((await s.locator('[data-action="remindNow"]').count()) === 1, 'diagnosis: tombol "Periksa pengingat sekarang" untuk siswa');
+  const callsBefore = await s.evaluate(() => window.__rpcCalls.length);
+  await s.click('[data-action="remindNow"]'); await s.waitForTimeout(300);
+  ok((await s.evaluate(() => window.__rpcCalls.length)) === callsBefore + 1, 'tombol periksa pengingat memanggil run_my_reminders');
+  await s.keyboard.press('Escape');
   await s.click('.toggle-row:has-text("Pengingat deadline") .switch'); await s.waitForTimeout(250);
   ok((await s.evaluate(() => __fakeDB().notification_settings[0]?.reminder)) === false, 'pengaturan reminder nonaktif tersimpan');
   await s.click('#view [data-action="readAll"]'); await s.waitForTimeout(250);
@@ -122,6 +179,7 @@ const ok = (c, m) => { if (c) { pass++; console.log('ok   ' + m); } else { fail.
   ok((await g.locator('.task-card', { hasText: 'Proyek Seni' }).count()) === 1, 'guru berhasil membuat tugas');
   ok((await g.evaluate(() => __fakeDB().tasks.find(t => t.title === 'Proyek Seni')?.deadline)) === '2027-01-15T07:30:00.000Z', 'deadline disimpan sebagai WIB (14:30 WIB = 07:30 UTC)');
   ok((await g.evaluate(() => __fakeDB().notifications.filter(n => n.title.includes('Misi Baru') && n.body.includes('tugas Seni Budaya.')).length)) === 3, 'notifikasi tugas baru ke 3 siswa');
+  ok(!(await g.evaluate(() => (window.__rpcCalls || []).includes('run_my_reminders'))), 'guru tidak menjalankan pengingat cadangan (hanya siswa)');
   ok((await g.locator('.task-card-footer .btn-status').count()) === 0, 'guru tidak punya tombol status siswa');
   // realtime notifikasi masuk ke siswa yang sedang membuka aplikasi
   ok((await b.locator('.toast').count()) >= 1 || true, 'toast notifikasi realtime (informasional)');
@@ -158,6 +216,16 @@ const ok = (c, m) => { if (c) { pass++; console.log('ok   ' + m); } else { fail.
   ok(await mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'mobile: tidak ada scroll horizontal (dashboard)');
   for (const r of ['tugas', 'jadwal', 'notifikasi', 'kelas', 'aktivitas']) { await mp.goto(BASE + `?as=dina#/${r}`); await mp.waitForTimeout(250); ok(await mp.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'mobile: tidak ada scroll horizontal (' + r + ')'); }
   await mp.goto(BASE + '?as=dina#/dashboard'); await mp.waitForTimeout(200); await mp.screenshot({ path: OUT + '/09-mobile.png' });
+  await mp.goto(BASE + '?as=dina#/tugas'); await mp.waitForSelector('.task-card'); await mp.locator('.task-card', { hasText: 'PR Matematika' }).click(); await mp.waitForSelector('.td-seg');
+  await mp.waitForTimeout(400);
+  ok(await mp.evaluate(() => { const r = document.querySelector('#modalOverlay .modal').getBoundingClientRect(); return r.height <= innerHeight + 1 && r.bottom <= innerHeight + 1; }), 'mobile: modal tidak melebihi tinggi layar');
+  ok(await mp.evaluate(() => { const b = document.querySelector('.td-body'); return b.scrollWidth <= b.clientWidth + 1 && document.documentElement.scrollWidth <= innerWidth + 1; }), 'mobile: modal tanpa horizontal overflow');
+  ok(await mp.evaluate(() => { const r = document.querySelector('#modalOverlay .modal').getBoundingClientRect(); return Math.abs(r.bottom - innerHeight) < 2; }), 'mobile: modal menempel di bawah (bottom sheet, satu tangan)');
+  ok((await mp.locator('.td-cd.expired').count()) === 1 && (await txt(mp, '#tdCdText')) === 'Deadline telah berakhir', 'mobile: deadline terlewati = abu-abu + teks "Deadline telah berakhir"');
+  const hit = await mp.evaluate(() => [...document.querySelectorAll('.td-seg-btn,.td-act,.modal-close')].every(b => { const r = b.getBoundingClientRect(); return r.width >= 40 && r.height >= 40; }));
+  ok(hit, 'mobile: target sentuh tombol >= 40px');
+  await mp.screenshot({ path: OUT + '/11-mobile-modal.png' });
+  await mp.keyboard.press('Escape');
   const mg = await m.newPage(); watch(mg); await mg.goto(BASE + '?as=bunita#/monitor'); await mg.waitForSelector('.monitor-head'); ok(await mg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'mobile: tidak ada scroll horizontal (monitor)'); await mg.screenshot({ path: OUT + '/10-mobile-monitor.png' });
 
   ok(errors.length === 0, 'tidak ada galat JS / console: ' + errors.slice(0, 4).join(' || '));
