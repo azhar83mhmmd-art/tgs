@@ -94,7 +94,8 @@ let flashRow = null;
 async function browserNotify(n) {
   if (!('Notification' in window) || Notification.permission !== 'granted') return;
   if (document.visibilityState === 'visible' && document.hasFocus()) return;   // sudah terlihat di aplikasi
-  if (state.me && localStorage.getItem('tk_push') === state.me.id) return;      // push server sudah mengantar notifikasi ini (hindari ganda)
+  // tidak ada pengecualian untuk push server: `tag: n.id` membuat notifikasi yang sama saling menggantikan (tidak ganda),
+  // dan notifikasi tetap tampil walau push server belum berfungsi.
   const opts = { body: n.body, tag: n.id, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', vibrate: [200, 100, 200],
                  data: { url: location.origin + location.pathname + (n.data?.url || '#/notifikasi') } };
   try {
@@ -116,7 +117,7 @@ async function boot() {
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
     // klik notifikasi saat aplikasi sudah terbuka -> buka halaman tujuan (deep link)
-    navigator.serviceWorker.addEventListener('message', e => { if (e.data?.type === 'tk-open' && e.data.hash) openDeepLink(e.data.hash); });
+    navigator.serviceWorker.addEventListener('message', e => { if (e.data?.type === 'tk-open' && e.data.hash) openDeepLink(e.data.hash); if (e.data?.type === 'tk-resync-push') syncPush(); });
   }
 
   sb.auth.onAuthStateChange((evt, session) => {
@@ -150,6 +151,7 @@ async function initApp() {
   subscribeRealtime();
   chatReset();
   syncPush();                                                  // perbarui langganan push perangkat ini (bila aktif)
+  renderPushBanner();
   if (!location.hash || location.hash === '#') location.hash = '#/dashboard';
   renderRoute();
   setInterval(() => { if (state.session && !NO_RERENDER.has(currentRoute)) rerenderSoft(); }, 60000);
@@ -158,7 +160,7 @@ async function initApp() {
 function onSignedOut() {
   state.session = null; state.loaded = false; unsubscribeRealtime();
   Object.assign(state, { me: null, classes: [], members: [], tasks: [], statuses: [], announcements: [], schedules: [], notifications: [], activity: [], logs: [] });
-  $('#appPage').classList.remove('active'); $('#loadingScreen').classList.add('hidden');
+  $('#pushBanner')?.remove(); $('#appPage').classList.remove('active'); $('#loadingScreen').classList.add('hidden');
   $('#loginPage').classList.add('active');
   $('#loginPassword').value = ''; closeModal(); setRTStatus('offline'); location.hash = '';
 }
