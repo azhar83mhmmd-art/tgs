@@ -131,6 +131,17 @@ async function boot() {
   if (!data.session) { $('#loadingScreen').classList.add('hidden'); $('#loginPage').classList.add('active'); }
 }
 
+/* Pengingat deadline: server (pg_cron) tetap yang utama; ini hanya memastikan pengingat yang jatuh tempo tidak terlewat
+   (saat aplikasi dibuka, tiap 5 menit selama terbuka, dan saat kembali ke aplikasi). Idempoten di server. */
+let reminderFallbackOn = false;
+function startReminderFallback() {
+  runMyReminders();
+  if (reminderFallbackOn) return;
+  reminderFallbackOn = true;
+  setInterval(runMyReminders, 5 * 60000);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') runMyReminders(); });
+}
+
 async function initApp() {
   $('#loadingScreen').classList.remove('hidden'); $('#loadingMsg').textContent = 'Memuat data...';
   $('#loginPage').classList.remove('active');
@@ -151,6 +162,7 @@ async function initApp() {
   subscribeRealtime();
   chatReset();
   syncPush();                                                  // perbarui langganan push perangkat ini (bila aktif)
+  startReminderFallback();                                     // cadangan pengingat deadline bila pg_cron belum aktif
   renderPushBanner();
   if (!location.hash || location.hash === '#') location.hash = '#/dashboard';
   renderRoute();
