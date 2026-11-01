@@ -4,7 +4,7 @@ const state = {
   classes: [], members: [], profiles: new Map(),
   tasks: [], statuses: [], announcements: [], schedules: [],
   notifications: [], activity: [], logs: [],
-  settings: { new_task: true, reminder: true, announcement: true, schedule: true },
+  settings: { new_task: true, reminder: true, announcement: true, schedule: true, reminder_time: null },
   activeClass: 'all', loaded: false,
 };
 let sb = null, channel = null;
@@ -74,6 +74,12 @@ const studentsOfClass = cid => state.members.filter(m => m.class_id === cid && m
 const statusRow = (taskId, studentId) => state.statuses.find(s => s.task_id === taskId && s.student_id === studentId);
 const isDone = (taskId, studentId) => !!statusRow(taskId, studentId)?.is_done;
 const myDone = taskId => isDone(taskId, state.me.id);
+/* Status 3 tingkat per siswa: belum | proses | selesai. Baris lama tanpa kolom status diturunkan dari is_done. */
+const TASK_STATUSES = ['belum', 'proses', 'selesai'];
+const STATUS_LABEL = { belum: 'Belum Dikerjakan', proses: 'Sedang Dikerjakan', selesai: 'Sudah Selesai' };
+const STATUS_PCT = { belum: 0, proses: 50, selesai: 100 };
+const statusOf = (taskId, studentId) => { const r = statusRow(taskId, studentId); return !r ? 'belum' : (TASK_STATUSES.includes(r.status) ? r.status : r.is_done ? 'selesai' : 'belum'); };
+const myStatus = taskId => statusOf(taskId, state.me.id);
 const isOverdue = t => new Date(t.deadline) < new Date();
 /* Statistik penyelesaian satu tugas (sisi guru) */
 function taskProgress(t) {
