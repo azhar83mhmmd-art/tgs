@@ -71,7 +71,7 @@ function pushState() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return 'unsupported';
   if (!VAPID_PUBLIC_KEY) return 'unconfigured';
   if (Notification.permission === 'denied') return 'denied';
-  return localStorage.getItem('tk_push') === state.me.id ? 'on' : 'off';
+  return localStorage.getItem('tk_push') === state.me.id && Notification.permission === 'granted' ? 'on' : 'off';
 }
 VIEWS.notifikasi = async (el) => {
   const un = state.notifications.filter(n => !n.read_at), list = notifTab === 'belum' ? un : state.notifications;
@@ -93,6 +93,7 @@ VIEWS.notifikasi = async (el) => {
         ${perm === 'default' ? `<button class="btn-primary btn-sm" data-action="askPerm">Izinkan</button>` : `<span class="status-pill ${perm === 'granted' ? 'done' : 'todo'}">${perm === 'granted' ? 'Aktif' : '—'}</span>`}</div>
       <div class="device-row"><div><b>Push saat website ditutup</b><small>${{ unsupported: 'Browser ini tidak mendukung Web Push', unconfigured: 'Belum dikonfigurasi admin (VAPID)', denied: 'Diblokir di pengaturan browser', on: 'Aktif di perangkat ini', off: 'Nonaktif di perangkat ini' }[ps]}</small></div>
         ${ps === 'off' ? `<button class="btn-primary btn-sm" data-action="pushOn">Aktifkan</button>` : ps === 'on' ? `<button class="btn-secondary btn-sm" data-action="pushOff">Matikan</button>` : ''}</div>
+      <div class="btn-row" style="margin-top:10px"><button class="btn-secondary btn-sm" data-action="pushTest"><i class="fas fa-paper-plane"></i> Kirim notifikasi tes</button><button class="btn-secondary btn-sm" data-action="pushDiag"><i class="fas fa-stethoscope"></i> Diagnosis</button></div>
       <p class="muted" style="font-size:12px;margin:8px 2px 0">Agar notifikasi muncul di atas layar HP seperti aplikasi biasa: aktifkan push, lalu pasang TugasKu ke Layar Utama (menu ⋮ browser → Instal aplikasi).</p></div></div>`;
   if (notifTab === 'riwayat') {
     const { data, error } = await sb.from('notification_logs').select('*').order('created_at', { ascending: false }).limit(200);
@@ -160,19 +161,57 @@ async function enablePush() {
 /* Saat aplikasi dibuka: pastikan langganan push perangkat ini masih tersimpan di server (browser bisa memutar endpoint). */
 async function syncPush() {
   try {
-    if (pushState() !== 'on') return;
+    if (pushState() === 'unsupported' || pushState() === 'unconfigured' || Notification.permission !== 'granted') return;
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription() ||
       await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToU8(VAPID_PUBLIC_KEY) });
     await savePushSub(sub);
   } catch { /* gagal diam-diam; pengguna bisa mengaktifkan ulang dari Pusat Notifikasi */ }
 }
+/* Banner ajakan mengaktifkan notifikasi latar belakang (izin browser hanya bisa diminta lewat ketukan pengguna). */
+function renderPushBanner() {
+  $('#pushBanner')?.remove();
+  const st = pushState();
+  if (st !== 'off' || sessionStorage.getItem('tk_push_banner_closed')) return;
+  const b = document.createElement('div'); b.id = 'pushBanner'; b.className = 'push-banner';
+  b.innerHTML = `<i class="fas fa-bell"></i><div><b>Aktifkan notifikasi</b><small>Agar tugas &amp; deadline muncul di layar HP walau aplikasi ditutup.</small></div>
+    <button class="btn-primary btn-sm" data-action="pushOn">Aktifkan</button><button class="btn-icon" data-action="pushBannerClose" aria-label="Tutup"><i class="fas fa-xmark"></i></button>`;
+  document.body.appendChild(b);
+}
 async function disablePush() {
   const reg = await navigator.serviceWorker?.getRegistration(); const sub = await reg?.pushManager.getSubscription();
   if (sub) { await sb.from('push_subscriptions').delete().eq('endpoint', sub.endpoint); await sub.unsubscribe(); }
   localStorage.removeItem('tk_push');
 }
-ACTIONS.pushOn = async () => { try { await enablePush(); showToast('Push aktif di perangkat ini.', 'success'); } catch (e) { showToast('Gagal mengaktifkan push: ' + errMsg(e), 'error'); } renderRoute(); };
+ACTIONS.pushOn = async () => { try { await enablePush(); showToast('Notifikasi latar belakang aktif di perangkat ini.', 'success'); } catch (e) { showToast('Gagal mengaktifkan push: ' + errMsg(e), 'error'); } renderPushBanner(); renderRoute(); };
+ACTIONS.pushBannerClose = () => { sessionStorage.setItem('tk_push_banner_closed', '1'); $('#pushBanner')?.remove(); };
+ACTIONS.pushTest = async () => {
+  try {
+    await syncPush();
+    const { error } = await sb.rpc('send_test_push');
+    if (error) throw error;
+    showToast('Tes dikirim. Tutup aplikasi — notifikasi seharusnya muncul di layar HP dalam beberapa detik.', 'success');
+  } catch (e) { showToast('Tes gagal: ' + errMsg(e) + ' (jalankan sql/11_push_diagnostik.sql)', 'error'); }
+};
+ACTIONS.pushDiag = async () => {
+  const { data: d, error } = await sb.rpc('push_diagnostics');
+  if (error) return showToast('Diagnosis gagal: ' + errMsg(error) + ' (jalankan sql/11_push_diagnostik.sql)', 'error');
+  const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
+  const last = (d.last_responses || [])[0];
+  const items = [
+    [Notification.permission === 'granted', 'Izin notifikasi di browser', Notification.permission],
+    [!!sub, 'Langganan push di perangkat ini', sub ? 'ada' : 'belum ada'],
+    [d.my_subscriptions > 0, 'Langganan tersimpan di server', d.my_subscriptions + ' perangkat'],
+    [d.pg_net, 'Ekstensi pg_net (Supabase → Database → Extensions)', d.pg_net ? 'aktif' : 'MATI'],
+    [d.url_set, 'app_config.push_function_url', d.url_set ? 'terisi' : 'KOSONG'],
+    [d.secret_set, 'app_config.push_webhook_secret', d.secret_set ? 'terisi' : 'KOSONG'],
+    [!last || (last.status_code >= 200 && last.status_code < 300), 'Respons terakhir Edge Function', last ? (last.status_code + ' ' + (last.detail || '')) : 'belum ada panggilan'],
+  ];
+  const hint = last && last.status_code === 401 ? 'Kode 401: secret tidak sama atau "Verify JWT" masih aktif — matikan Verify JWT pada fungsi send-push dan samakan PUSH_WEBHOOK_SECRET dengan app_config.push_webhook_secret.'
+    : last && last.status_code === 404 ? 'Kode 404: URL fungsi salah / fungsi send-push belum di-deploy.'
+    : last && last.status_code >= 500 ? 'Kode 5xx: cek Edge Functions → send-push → Logs (biasanya secret VAPID_PRIVATE_KEY / VAPID_PUBLIC_KEY belum diisi atau tidak berpasangan).' : '';
+  openModal(`<div class="modal-title">Diagnosis Notifikasi</div><div class="diag-list">${items.map(i => `<div class="device-row"><div><b>${i[1]}</b><small>${esc(String(i[2]))}</small></div><span class="status-pill ${i[0] ? 'done' : 'todo'}">${i[0] ? 'OK' : 'Perlu dicek'}</span></div>`).join('')}</div>${hint ? `<p class="muted" style="margin-top:10px">${esc(hint)}</p>` : ''}`);
+};
 ACTIONS.pushOff = async () => { try { await disablePush(); showToast('Push dimatikan.', 'info'); } catch (e) { showToast(errMsg(e), 'error'); } renderRoute(); };
 
 /* ---------- Aktivitas ---------- */
