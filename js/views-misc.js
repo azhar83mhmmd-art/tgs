@@ -87,6 +87,8 @@ VIEWS.notifikasi = async (el) => {
       list.length ? list.map(notifItem).join('') : emptyState('fa-bell-slash', notifTab === 'belum' ? 'Tidak ada notifikasi belum dibaca' : 'Belum ada notifikasi', 'Notifikasi tugas, pengingat, dan pengumuman muncul di sini.')}</div>
     <div class="card settings-card"><h3><i class="fas fa-sliders"></i> Pengaturan Notifikasi</h3>
       ${tog('new_task', 'Tugas baru', 'Saat guru memberi tugas baru')}${tog('reminder', 'Pengingat deadline', 'H-3, H-1, hari-H, overdue, dan perubahan deadline')}
+      <label class="toggle-row ${S.reminder ? '' : 'is-off'}"><div><b>Jam pengingat</b><small>H-3, H-1, hari-H &amp; ujian dikirim mulai jam ini (WIB)</small></div>
+        <input type="time" class="time-input" id="reminderTime" data-action-change="reminderTime" value="${esc(String(S.reminder_time || '07:00').slice(0, 5))}" ${S.reminder ? '' : 'disabled'}></label>
       ${tog('announcement', 'Pengumuman', 'Pengumuman dari guru')}${tog('schedule', 'Pengingat ujian', 'Sehari sebelum ujian')}
       <hr><h3><i class="fas fa-mobile-screen"></i> Notifikasi di perangkat</h3>
       <div class="device-row"><div><b>Notifikasi browser</b><small>${perm === 'granted' ? 'Aktif' : perm === 'denied' ? 'Diblokir di pengaturan browser' : perm === 'unsupported' ? 'Tidak didukung perangkat ini' : 'Belum diizinkan'}</small></div>
@@ -102,17 +104,26 @@ VIEWS.notifikasi = async (el) => {
     $('#notifMain').innerHTML = error ? emptyState('fa-circle-exclamation', 'Gagal memuat riwayat') : !state.logs.length ? emptyState('fa-clock-rotate-left', 'Belum ada riwayat pengiriman') :
       `<div class="card no-pad"><div class="log-table">${state.logs.map(l => { const u = state.profiles.get(l.user_id);
         return `<div class="log-row"><span class="status-pill ${l.status === 'sent' ? 'done' : 'todo'}">${l.status === 'sent' ? 'Terkirim' : l.status === 'skipped' ? 'Dilewati' : 'Gagal'}</span>
-          <div><b>${esc(NOTIF_LABEL[l.kind] || l.kind)}</b> → ${esc(u?.full_name || 'Pengguna')}<small>${esc(l.channel === 'push' ? 'Push' : 'Dalam aplikasi')}${l.detail ? ' · ' + esc(l.detail) : ''}${l.superseded_at ? ' · digantikan (deadline berubah)' : ''}</small></div>
+          <div><b>${esc(NOTIF_LABEL[l.kind] || l.kind)}</b> → ${esc(u?.full_name || 'Pengguna')}<small>${esc(l.channel === 'push' ? 'Push' : 'Dalam aplikasi')}${l.detail ? ' · ' + esc(l.detail) : ''}${l.superseded_at ? ' · digantikan' : ''}</small></div>
           <small>${fmtDateTime(l.created_at)}</small></div>`; }).join('')}</div></div>`;
   }
 };
 ACTIONS.notifTab = a => { notifTab = a.dataset.v; VIEWS.notifikasi($('#view')); };
 document.addEventListener('change', async e => {
+  const tm = e.target.closest('[data-action-change="reminderTime"]');
+  if (tm) {
+    const prev = state.settings.reminder_time || null, v = tm.value;
+    if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(v)) { tm.value = String(prev || '07:00').slice(0, 5); return showToast('Jam tidak valid.', 'error'); }
+    state.settings.reminder_time = v;
+    const { error } = await sb.from('notification_settings').upsert({ user_id: state.me.id, reminder_time: v }, { onConflict: 'user_id' });
+    if (error) { state.settings.reminder_time = prev; tm.value = String(prev || '07:00').slice(0, 5); return showToast('Gagal menyimpan jam pengingat: ' + errMsg(error) + ' (jalankan sql/14_jam_pengingat.sql)', 'error'); }
+    showToast('Jam pengingat disimpan: ' + v + ' WIB.', 'success'); runMyReminders(); return;
+  }
   const a = e.target.closest('[data-action-change="setting"]'); if (!a) return;
   const k = a.dataset.key, prev = state.settings[k]; state.settings[k] = a.checked;
   const { error } = await sb.from('notification_settings').upsert({ user_id: state.me.id, new_task: state.settings.new_task, reminder: state.settings.reminder,
     announcement: state.settings.announcement, schedule: state.settings.schedule }, { onConflict: 'user_id' });
-  if (error) { state.settings[k] = prev; a.checked = prev; showToast('Gagal menyimpan pengaturan: ' + errMsg(error), 'error'); } else showToast('Pengaturan disimpan.', 'success');
+  if (error) { state.settings[k] = prev; a.checked = prev; showToast('Gagal menyimpan pengaturan: ' + errMsg(error), 'error'); } else { showToast('Pengaturan disimpan.', 'success'); if (k === 'reminder') { if (a.checked) runMyReminders(); const rt = $('#reminderTime'); if (rt) { rt.disabled = !a.checked; rt.closest('label')?.classList.toggle('is-off', !a.checked); } } }
 });
 async function markRead(ids) {
   const now = new Date().toISOString(); ids = ids.filter(Boolean); if (!ids.length) return;
@@ -141,6 +152,24 @@ ACTIONS.openNotif = async a => {
   renderRoute();
 };
 ACTIONS.askPerm = async () => { await Notification.requestPermission(); renderRoute(); };
+
+/* Cadangan pengingat deadline: minta server membuat pengingat (H-3/H-1/hari-H/overdue) yang sudah jatuh tempo untuk akunku.
+   Aturan & pencegah duplikat sama persis dengan scheduler pg_cron (idempoten, aman diulang). Hanya siswa. */
+let remindersBusy = false;
+async function runMyReminders() {
+  if (remindersBusy || !state.session || !state.loaded || isGuru()) return null;
+  remindersBusy = true;
+  try { const { data, error } = await sb.rpc('run_my_reminders'); if (error) throw error; return data; }
+  catch (e) { console.warn('run_my_reminders:', e.message || e); return null; }   // sql/13 belum dijalankan -> abaikan diam-diam
+  finally { remindersBusy = false; }
+}
+ACTIONS.remindNow = async () => {
+  if (isGuru()) return showToast('Pengingat deadline hanya untuk akun siswa.', 'info');
+  const d = await runMyReminders();
+  if (!d) return showToast('Gagal memeriksa pengingat — jalankan sql/13_perbaikan_pengingat.sql di Supabase.', 'error');
+  const n = (d.student_notifications || 0) + (d.exam_notifications || 0);
+  showToast(n ? n + ' pengingat baru dibuat.' : 'Tidak ada pengingat yang jatuh tempo saat ini.', 'success');
+};
 
 /* Web Push */
 const b64ToU8 = s => { const p = '='.repeat((4 - s.length % 4) % 4), r = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from([...r].map(c => c.charCodeAt(0))); };
@@ -198,6 +227,19 @@ ACTIONS.pushDiag = async () => {
   if (error) return showToast('Diagnosis gagal: ' + errMsg(error) + ' (jalankan sql/11_push_diagnostik.sql)', 'error');
   const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
   const last = (d.last_responses || [])[0];
+  const { data: rd } = await sb.rpc('reminder_diagnostics');            // null bila sql/13 belum dijalankan
+  const parseTs = x => new Date(String(x).replace(' ', 'T').replace(/([+-]\d\d)$/, '$1:00'));
+  const lastRun = rd?.last_run_at ? parseTs(rd.last_run_at) : null, runAge = lastRun && !isNaN(lastRun) ? (Date.now() - lastRun) / 60000 : null;
+  const cr = rd && (rd.last_runs || [])[0];
+  const remItems = !rd ? [[false, 'Pengingat deadline (H-3, H-1, hari-H, overdue)', 'belum bisa dicek — jalankan sql/13_perbaikan_pengingat.sql']] : [
+    [rd.cron_installed && !!rd.job && rd.job.active !== false, 'Penjadwal pengingat (pg_cron)',
+      !rd.cron_installed ? 'MATI — aktifkan pg_cron (Database → Extensions) lalu jalankan sql/13' : !rd.job ? 'jadwal belum dibuat — jalankan sql/13' : rd.job.active === false ? 'jadwal dinonaktifkan' : 'aktif (' + rd.job.schedule + ')'],
+    [runAge !== null && runAge < 15, 'Eksekusi pengingat terakhir', runAge === null ? 'belum pernah berjalan' : Math.round(runAge) + ' menit lalu'],
+    ...(cr && cr.status && cr.status !== 'succeeded' ? [[false, 'Hasil eksekusi cron terakhir', cr.status + ' ' + (cr.detail || '')]] : []),
+    [rd.reminder_enabled, 'Pengaturan "Pengingat deadline"', rd.reminder_enabled ? 'aktif' : 'MATI — hidupkan di Pengaturan Notifikasi'],
+    ...(rd.skipped_by_setting > 0 ? [[false, 'Pengingat yang dilewati karena pengaturan mati', rd.skipped_by_setting + ' (hidupkan pengaturan lalu tekan "Periksa pengingat sekarang")']] : []),
+    [true, 'Pengingat yang sudah kamu terima', rd.my_reminders + ' · tugas belum selesai: ' + rd.open_tasks],
+  ];
   const items = [
     [Notification.permission === 'granted', 'Izin notifikasi di browser', Notification.permission],
     [!!sub, 'Langganan push di perangkat ini', sub ? 'ada' : 'belum ada'],
@@ -210,7 +252,10 @@ ACTIONS.pushDiag = async () => {
   const hint = last && last.status_code === 401 ? 'Kode 401: secret tidak sama atau "Verify JWT" masih aktif — matikan Verify JWT pada fungsi send-push dan samakan PUSH_WEBHOOK_SECRET dengan app_config.push_webhook_secret.'
     : last && last.status_code === 404 ? 'Kode 404: URL fungsi salah / fungsi send-push belum di-deploy.'
     : last && last.status_code >= 500 ? 'Kode 5xx: cek Edge Functions → send-push → Logs (biasanya secret VAPID_PRIVATE_KEY / VAPID_PUBLIC_KEY belum diisi atau tidak berpasangan).' : '';
-  openModal(`<div class="modal-title">Diagnosis Notifikasi</div><div class="diag-list">${items.map(i => `<div class="device-row"><div><b>${i[1]}</b><small>${esc(String(i[2]))}</small></div><span class="status-pill ${i[0] ? 'done' : 'todo'}">${i[0] ? 'OK' : 'Perlu dicek'}</span></div>`).join('')}</div>${hint ? `<p class="muted" style="margin-top:10px">${esc(hint)}</p>` : ''}`);
+  const remHint = 'Pengingat H-3/H-1/hari-H dikirim mulai jam pengingat yang kamu pilih (bawaan 07.00 WIB) hanya untuk tugas yang belum selesai, tepat 3/1/0 hari sebelum tanggal deadline. Tugas yang baru dibuat < 2 jam belum diingatkan; overdue hanya untuk tugas yang lewat deadline ≤ 2 hari.';
+  items.push(...remItems);
+  openModal(`<div class="modal-title">Diagnosis Notifikasi</div><div class="diag-list">${items.map(i => `<div class="device-row"><div><b>${i[1]}</b><small>${esc(String(i[2]))}</small></div><span class="status-pill ${i[0] ? 'done' : 'todo'}">${i[0] ? 'OK' : 'Perlu dicek'}</span></div>`).join('')}</div>${hint ? `<p class="muted" style="margin-top:10px">${esc(hint)}</p>` : ''}<p class="muted" style="margin-top:10px;font-size:12px">${esc(remHint)}</p>
+    ${isGuru() ? '' : `<div class="btn-row" style="margin-top:10px"><button class="btn-primary btn-sm" data-action="remindNow"><i class="fas fa-bell"></i> Periksa pengingat sekarang</button></div>`}`);
 };
 ACTIONS.pushOff = async () => { try { await disablePush(); showToast('Push dimatikan.', 'info'); } catch (e) { showToast(errMsg(e), 'error'); } renderRoute(); };
 
