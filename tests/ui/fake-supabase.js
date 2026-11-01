@@ -70,7 +70,7 @@
       if (!m || m.role === 'guru') return rows;
       if (t === 'profiles') return rows.filter(p => p.id === m.id || p.role === 'guru');
       if (t === 'class_members') return rows.filter(r => r.user_id === m.id);
-      if (t === 'task_status') return rows.filter(r => r.student_id === m.id);
+      if (t === 'task_status' || t === 'task_status_history') return rows.filter(r => r.student_id === m.id);
       if (t === 'activity_logs') return rows.filter(r => r.user_id === m.id);
       return rows;
     };
@@ -80,14 +80,27 @@
       out = [];
       for (const raw of q.rows) {
         const r = { ...raw };
+        let prevStatus = 'belum';
+        if (t === 'task_status') {                      // meniru trigger sql/12: status <-> is_done
+          const ex0 = rows.find(x => key(t, x) === key(t, r));
+          prevStatus = ex0 ? (ex0.status || (ex0.is_done ? 'selesai' : 'belum')) : 'belum';
+          if (r.status) r.is_done = r.status === 'selesai';
+          else if (r.is_done !== undefined) r.status = r.is_done ? 'selesai' : (prevStatus === 'proses' ? 'proses' : 'belum');
+          if (window.__failStatusSave) { err = { message: 'boom: gagal menyimpan' }; break; }
+        }
         if (!r.id && !['task_status', 'class_members', 'notification_settings'].includes(t)) r.id = uid();
         if (t === 'classes') r.join_code = r.join_code || ('J' + uid().slice(0, 7).toUpperCase());
         r.created_at ||= now();
+        if (t === 'notification_settings' && !rows.some(x => x.user_id === r.user_id)) Object.assign(r, { new_task: true, reminder: true, announcement: true, schedule: true, reminder_time: null }, raw);   // default kolom seperti di database
         const pk = t === 'notification_settings' ? (x => x.user_id) : (x => key(t, x));
         const ex = rows.find(x => pk(x) === pk(r));
         if (ex) { if (q.op === 'insert') { err = { message: 'duplicate key value violates unique constraint' }; break; } Object.assign(ex, r, t === 'task_status' ? { updated_at: now() } : {}); out.push(ex); emit(t, 'UPDATE', ex); }
         else { if (t === 'task_status') r.updated_at = now(); rows.push(r); out.push(r); emit(t, 'INSERT', r); afterInsert(t, r); if (t === 'task_status') { const task = db.tasks.find(x => x.id === r.task_id); const a = { id: uid(), class_id: task.class_id, user_id: r.student_id, task_id: r.task_id, task_title: task.title, action: r.is_done ? 'mark_done' : 'mark_undone', created_at: now() }; db.activity_logs.unshift(a); emit('activity_logs', 'INSERT', a); } }
         if (t === 'task_status' && ex) { const task = db.tasks.find(x => x.id === ex.task_id); const a = { id: uid(), class_id: task.class_id, user_id: ex.student_id, task_id: ex.task_id, task_title: task.title, action: ex.is_done ? 'mark_done' : 'mark_undone', created_at: now() }; db.activity_logs.unshift(a); emit('activity_logs', 'INSERT', a); }
+        if (t === 'task_status' && r.status !== prevStatus) {
+          const h = { id: uid(), task_id: r.task_id, student_id: r.student_id, old_status: prevStatus, new_status: r.status, changed_by: me()?.id || null, changed_at: now() };
+          (db.task_status_history ||= []).push(h);
+        }
       }
     } else if (q.op === 'update') { out = rows.filter(match); out.forEach(r => { const old = { ...r }; Object.assign(r, q.patch); emit(t, 'UPDATE', r, old); }); }
     else if (q.op === 'delete') { out = rows.filter(match); db[t] = rows.filter(r => !match(r)); out.forEach(r => emit(t, 'DELETE', {}, r)); if (t === 'tasks') out.forEach(o => { db.task_status = db.task_status.filter(s => s.task_id !== o.id); }); }
@@ -127,6 +140,9 @@
       if (!db.class_members.some(x => x.class_id === c.id && x.user_id === m.id)) { const r = { class_id: c.id, user_id: m.id, member_role: 'siswa', joined_at: now() }; db.class_members.push(r); save(); emit('class_members', 'INSERT', r); } return { data: c.id, error: null }; }
     if (fn === 'log_task_view') { const t = db.tasks.find(x => x.id === a.p_task); const r = { id: uid(), class_id: t.class_id, user_id: m.id, task_id: t.id, task_title: t.title, action: 'view_task', created_at: now() }; db.activity_logs.unshift(r); save(); emit('activity_logs', 'INSERT', r); return { data: null, error: null }; }
     if (fn === 'regenerate_join_code') { const c = db.classes.find(x => x.id === a.p_class); c.join_code = 'NEWCODE' + Math.floor(Math.random() * 10); save(); return { data: c.join_code, error: null }; }
+    if (fn === 'run_my_reminders') { (window.__rpcCalls = window.__rpcCalls || []).push(fn); return { data: { student_notifications: 0, exam_notifications: 0, errors: 0 }, error: null }; }
+    if (fn === 'reminder_diagnostics') return { data: { cron_installed: false, job: null, last_runs: [], last_run_at: null, reminder_enabled: true, open_tasks: 2, my_reminders: 0, skipped_by_setting: 0 }, error: null };
+    if (fn === 'push_diagnostics') return { data: { url_set: true, secret_set: true, pg_net: true, my_subscriptions: 0, last_responses: [] }, error: null };
     return { data: null, error: { message: 'rpc tidak dikenal: ' + fn } };
   };
   const auth = {
