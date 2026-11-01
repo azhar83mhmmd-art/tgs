@@ -15,6 +15,7 @@ self.addEventListener('push', event => {
     vibrate: [200, 100, 200],
     lang: 'id', timestamp: Date.now(),
     renotify: false,
+    requireInteraction: false,
     data: { url: d.url || './#/notifikasi' },
   }));
 });
@@ -28,4 +29,9 @@ self.addEventListener('notificationclick', event => {
     for (const c of list) if ('focus' in c) { c.postMessage({ type: 'tk-open', hash }); return c.focus(); }
     return self.clients.openWindow(url);
   }));
+});
+
+// Browser memutar endpoint langganan push -> daftarkan ulang otomatis (klien menyimpannya lagi saat aplikasi dibuka)
+self.addEventListener('pushsubscriptionchange', event => {
+  event.waitUntil(self.clients.matchAll({ includeUncontrolled: true }).then(list => list.forEach(c => c.postMessage({ type: 'tk-resync-push' }))));
 });
