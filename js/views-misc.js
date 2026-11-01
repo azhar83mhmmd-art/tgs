@@ -227,6 +227,7 @@ ACTIONS.pushDiag = async () => {
   if (error) return showToast('Diagnosis gagal: ' + errMsg(error) + ' (jalankan sql/11_push_diagnostik.sql)', 'error');
   const sub = await (await navigator.serviceWorker.ready).pushManager.getSubscription();
   const last = (d.last_responses || [])[0];
+  const { data: ex } = await sb.rpc('reminder_explain');                // null bila sql/15 belum dijalankan
   const { data: rd } = await sb.rpc('reminder_diagnostics');            // null bila sql/13 belum dijalankan
   const parseTs = x => new Date(String(x).replace(' ', 'T').replace(/([+-]\d\d)$/, '$1:00'));
   const lastRun = rd?.last_run_at ? parseTs(rd.last_run_at) : null, runAge = lastRun && !isNaN(lastRun) ? (Date.now() - lastRun) / 60000 : null;
@@ -254,7 +255,22 @@ ACTIONS.pushDiag = async () => {
     : last && last.status_code >= 500 ? 'Kode 5xx: cek Edge Functions → send-push → Logs (biasanya secret VAPID_PRIVATE_KEY / VAPID_PUBLIC_KEY belum diisi atau tidak berpasangan).' : '';
   const remHint = 'Pengingat H-3/H-1/hari-H dikirim mulai jam pengingat yang kamu pilih (bawaan 07.00 WIB) hanya untuk tugas yang belum selesai, tepat 3/1/0 hari sebelum tanggal deadline. Tugas yang baru dibuat < 2 jam belum diingatkan; overdue hanya untuk tugas yang lewat deadline ≤ 2 hari.';
   items.push(...remItems);
-  openModal(`<div class="modal-title">Diagnosis Notifikasi</div><div class="diag-list">${items.map(i => `<div class="device-row"><div><b>${i[1]}</b><small>${esc(String(i[2]))}</small></div><span class="status-pill ${i[0] ? 'done' : 'todo'}">${i[0] ? 'OK' : 'Perlu dicek'}</span></div>`).join('')}</div>${hint ? `<p class="muted" style="margin-top:10px">${esc(hint)}</p>` : ''}<p class="muted" style="margin-top:10px;font-size:12px">${esc(remHint)}</p>
+  /* Alasan per tugas: kapan pengingat berikutnya, dan apa yang sudah tercatat di server */
+  const why = (t, e) => {
+    const lg = t.log || '', kind = { 3: 'reminder_h3', 1: 'reminder_h1', 0: 'reminder_h0' }[t.days_left];
+    if (new Date(t.deadline) < new Date()) return lg.includes('overdue') ? 'Overdue sudah dikirim' : 'Overdue: akan dikirim pada eksekusi pengingat berikutnya';
+    if (kind) {
+      if (t.too_new) return 'Tugas baru dibuat < 2 jam lalu — pengingat ditunda sebentar';
+      if (e.now_wib < e.remind_at) return 'Menunggu jam pengingat ' + e.remind_at + ' WIB (sekarang ' + e.now_wib + ')';
+      return lg.includes(kind) ? 'Pengingat sudah dikirim' : 'Seharusnya sudah dikirim — scheduler/cadangan belum berjalan (tekan "Periksa pengingat sekarang")';
+    }
+    if (t.days_left > 3) return 'Belum waktunya: pengingat pertama (H-3) ' + (t.days_left - 3) + ' hari lagi';
+    return 'Belum waktunya: pengingat berikutnya H-1 (besok), hari ini H-' + t.days_left;
+  };
+  const exHtml = !ex ? '' : `<div class="modal-title" style="font-size:15px;margin-top:14px">Tugas belum selesai &amp; pengingatnya</div>` +
+    (ex.tasks.length ? ex.tasks.map(t => `<div class="device-row"><div><b>${esc(t.subject)} — ${esc(t.title)}</b><small>${esc(fmtDateTime(t.deadline))} · ${esc(why(t, ex))}</small>${t.log ? `<small>Catatan server: ${esc(t.log)}</small>` : '<small>Catatan server: belum ada</small>'}</div></div>`).join('')
+      : '<p class="muted">Tidak ada tugas belum selesai yang aktif.</p>');
+  openModal(`<div class="modal-title">Diagnosis Notifikasi</div><div class="diag-list">${items.map(i => `<div class="device-row"><div><b>${i[1]}</b><small>${esc(String(i[2]))}</small></div><span class="status-pill ${i[0] ? 'done' : 'todo'}">${i[0] ? 'OK' : 'Perlu dicek'}</span></div>`).join('')}</div>${hint ? `<p class="muted" style="margin-top:10px">${esc(hint)}</p>` : ''}${exHtml}<p class="muted" style="margin-top:10px;font-size:12px">${esc(remHint)}</p>
     ${isGuru() ? '' : `<div class="btn-row" style="margin-top:10px"><button class="btn-primary btn-sm" data-action="remindNow"><i class="fas fa-bell"></i> Periksa pengingat sekarang</button></div>`}`);
 };
 ACTIONS.pushOff = async () => { try { await disablePush(); showToast('Push dimatikan.', 'info'); } catch (e) { showToast(errMsg(e), 'error'); } renderRoute(); };
