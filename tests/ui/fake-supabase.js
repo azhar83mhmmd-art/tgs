@@ -115,6 +115,14 @@
   const rpc = async (fn, a) => {
     const m = me();
     if (fn === 'username_available') return { data: !db.profiles.some(p => p.username === a.p_username), error: null };
+    if (fn === 'register_account') {
+      if (a.p_role === 'guru' && a.p_teacher_code !== 'KENZO') return { data: null, error: { message: 'Kode guru salah' } };
+      const email = a.p_username + '@tugasku.local';
+      if (db.users.some(u => u.email === email)) return { data: null, error: { message: 'Username sudah digunakan, coba yang lain!' } };
+      const id = uid(); db.users.push({ id, email, password: a.p_password });
+      db.profiles.push({ id, username: a.p_username, full_name: a.p_full_name, role: a.p_role === 'guru' ? 'guru' : 'siswa', avatar_url: null, created_at: now() }); save();
+      return { data: null, error: null };
+    }
     if (fn === 'join_class') { const c = db.classes.find(x => x.join_code === a.p_code.replace(/[^A-Za-z0-9]/g, '').toUpperCase()); if (!c) return { data: null, error: { message: 'Kode kelas tidak ditemukan' } };
       if (!db.class_members.some(x => x.class_id === c.id && x.user_id === m.id)) { const r = { class_id: c.id, user_id: m.id, member_role: 'siswa', joined_at: now() }; db.class_members.push(r); save(); emit('class_members', 'INSERT', r); } return { data: c.id, error: null }; }
     if (fn === 'log_task_view') { const t = db.tasks.find(x => x.id === a.p_task); const r = { id: uid(), class_id: t.class_id, user_id: m.id, task_id: t.id, task_title: t.title, action: 'view_task', created_at: now() }; db.activity_logs.unshift(r); save(); emit('activity_logs', 'INSERT', r); return { data: null, error: null }; }
