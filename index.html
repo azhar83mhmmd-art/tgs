@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#4f46e5" />
+  <title>TugasKu — Pemberitahuan & Pengingat Tugas Sekolah</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="v3.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js" defer></script>
+</head>
+<body>
+
+  <div id="loadingScreen" class="loading-screen">
+    <div class="loading-logo">
+      <div class="brand-icon spin-logo"><i class="fas fa-graduation-cap"></i></div>
+      <h2>TugasKu</h2><p id="loadingMsg">Menghubungkan ke database...</p>
+    </div>
+  </div>
+
+  <!-- LOGIN / DAFTAR -->
+  <div id="loginPage" class="page">
+    <div class="login-bg"><div class="login-blob blob-1"></div><div class="login-blob blob-2"></div><div class="login-blob blob-3"></div></div>
+    <div class="login-container">
+      <div class="login-brand">
+        <div class="brand-icon"><i class="fas fa-graduation-cap"></i></div>
+        <h1>TugasKu</h1><p>Pemberitahuan tugas & pengingat deadline sekolah</p>
+      </div>
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabLogin" data-action="tab" data-tab="login">Masuk</button>
+        <button class="auth-tab" id="tabDaftar" data-action="tab" data-tab="daftar">Daftar Akun</button>
+      </div>
+
+      <div class="login-card" id="formLogin">
+        <div id="loginError" class="alert alert-error hidden"><i class="fas fa-circle-exclamation"></i> <span></span></div>
+        <div class="form-group"><label for="loginUsername">Username</label>
+          <div class="input-wrap"><i class="fas fa-user"></i><input type="text" id="loginUsername" placeholder="Masukkan username" autocomplete="username" autocapitalize="none" /></div></div>
+        <div class="form-group"><label for="loginPassword">Password</label>
+          <div class="input-wrap"><i class="fas fa-lock"></i><input type="password" id="loginPassword" placeholder="Masukkan password" autocomplete="current-password" />
+            <button class="toggle-pass" data-action="togglePass" data-target="loginPassword" type="button" aria-label="Tampilkan password"><i class="fas fa-eye"></i></button></div></div>
+        <label class="remember-me-wrap"><input type="checkbox" id="rememberMe" checked /><span>Ingat saya (tetap login)</span></label>
+        <button class="btn-primary btn-full" id="btnLogin" data-action="login"><span>Masuk</span> <i class="fas fa-arrow-right"></i></button>
+        <p class="auth-switch">Belum punya akun? <a href="#" data-action="tab" data-tab="daftar">Daftar sekarang</a></p>
+      </div>
+
+      <div class="login-card hidden" id="formDaftar">
+        <div id="daftarError" class="alert alert-error hidden"><i class="fas fa-circle-exclamation"></i> <span></span></div>
+        <div id="daftarSuccess" class="alert alert-success hidden"><i class="fas fa-check-circle"></i> <span></span></div>
+        <div class="form-group"><label for="daftarNama">Nama Lengkap <span class="req">*</span></label>
+          <div class="input-wrap"><i class="fas fa-id-card"></i><input type="text" id="daftarNama" placeholder="Contoh: Budi Santoso" autocomplete="name" /></div></div>
+        <div class="form-group"><label for="daftarUsername">Username <span class="req">*</span></label>
+          <div class="input-wrap"><i class="fas fa-at"></i><input type="text" id="daftarUsername" placeholder="4–30 karakter, huruf kecil/angka" autocomplete="username" autocapitalize="none" /></div></div>
+        <div class="form-group"><label for="daftarPassword">Password <span class="req">*</span></label>
+          <div class="input-wrap"><i class="fas fa-lock"></i><input type="password" id="daftarPassword" placeholder="Min. 6 karakter" autocomplete="new-password" />
+            <button class="toggle-pass" data-action="togglePass" data-target="daftarPassword" type="button" aria-label="Tampilkan password"><i class="fas fa-eye"></i></button></div></div>
+        <div class="form-group"><label>Daftar sebagai <span class="req">*</span></label>
+          <div class="role-picker">
+            <label class="role-option active" id="roleOptSiswa"><input type="radio" name="daftarRole" value="siswa" checked /><div class="role-card"><i class="fas fa-user-graduate"></i><span>Siswa</span></div></label>
+            <label class="role-option" id="roleOptGuru"><input type="radio" name="daftarRole" value="guru" /><div class="role-card"><i class="fas fa-chalkboard-teacher"></i><span>Guru</span></div></label>
+          </div></div>
+        <div class="form-group hidden" id="kodeGuruWrap"><label for="kodeGuru">Kode Guru <span class="req">*</span></label>
+          <div class="input-wrap"><i class="fas fa-shield-halved"></i><input type="password" id="kodeGuru" placeholder="Kode khusus guru dari admin sekolah" autocomplete="off" /></div></div>
+        <div class="form-group" id="kodeKelasWrap"><label for="kodeKelas">Kode Kelas (opsional)</label>
+          <div class="input-wrap"><i class="fas fa-school"></i><input type="text" id="kodeKelas" placeholder="Dari gurumu — bisa diisi nanti" autocomplete="off" /></div></div>
+        <button class="btn-primary btn-full" id="btnDaftar" data-action="daftar"><span>Buat Akun</span> <i class="fas fa-user-plus"></i></button>
+        <p class="auth-switch">Sudah punya akun? <a href="#" data-action="tab" data-tab="login">Masuk di sini</a></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- APLIKASI -->
+  <div id="appPage" class="page">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div class="brand-mini"><div class="brand-icon-sm"><i class="fas fa-graduation-cap"></i></div><span>TugasKu</span></div>
+        <button class="sidebar-close" data-action="sidebar" aria-label="Tutup menu"><i class="fas fa-times"></i></button>
+      </div>
+      <div class="user-info"><div class="user-avatar" id="sidebarAvatar"></div><div><div class="user-name" id="sidebarName"></div><div class="user-role-badge" id="sidebarRole"></div></div></div>
+      <div class="class-picker" id="classPickerWrap"><label for="classPicker"><i class="fas fa-school"></i> Kelas aktif</label><select id="classPicker"></select></div>
+      <nav class="sidebar-nav" id="sidebarNav"></nav>
+      <div class="sidebar-footer">
+        <div class="realtime-indicator"><span class="rt-dot" id="rtDot"></span><span id="rtStatus">Menghubungkan...</span></div>
+        <button class="btn-logout" data-action="logout"><i class="fas fa-sign-out-alt"></i> Keluar</button>
+      </div>
+    </aside>
+    <div class="sidebar-overlay" id="sidebarOverlay" data-action="sidebar"></div>
+
+    <main class="main-content">
+      <header class="topbar">
+        <button class="menu-btn" data-action="sidebar" aria-label="Buka menu"><i class="fas fa-bars"></i></button>
+        <div class="topbar-search"><i class="fas fa-search"></i><input type="search" id="searchInput" placeholder="Cari tugas..." /></div>
+        <div class="topbar-right">
+          <button class="notif-btn" id="notifBtn" data-action="bell" aria-label="Notifikasi"><i class="fas fa-bell"></i><span class="notif-dot" id="notifDot"></span></button>
+          <button class="topbar-avatar" id="topbarAvatar" data-action="go" data-route="profil" aria-label="Profil"></button>
+        </div>
+      </header>
+      <div class="notif-panel hidden" id="notifPanel">
+        <div class="notif-header"><span>Notifikasi</span><button data-action="readAll"><i class="fas fa-check-double"></i> Tandai semua</button></div>
+        <div id="notifList" class="notif-list"></div>
+        <button class="notif-footer" data-action="go" data-route="notifikasi">Buka Pusat Notifikasi →</button>
+      </div>
+      <div id="view" class="view"></div>
+    </main>
+  </div>
+
+  <div class="modal-overlay hidden" id="modalOverlay">
+    <div class="modal"><button class="modal-close" data-action="closeModal" aria-label="Tutup"><i class="fas fa-times"></i></button><div id="modalContent"></div></div>
+  </div>
+
+  <div class="modal-overlay hidden" id="confirmOverlay" style="z-index:1200">
+    <div class="modal kick-modal" role="alertdialog" aria-modal="true">
+      <div class="kick-modal-icon" id="confirmIcon"></div>
+      <h3 id="confirmTitle"></h3><p id="confirmMsg" class="kick-warning"></p>
+      <div class="kick-modal-actions"><button class="btn-secondary" id="confirmCancel">Batal</button><button class="btn-danger" id="confirmOk">Ya</button></div>
+    </div>
+  </div>
+
+  <div class="chatbot-wrap">
+    <div class="chatbot-box hidden" id="chatbotBox">
+      <div class="chatbot-header"><div class="chatbot-avatar"><i class="fas fa-robot"></i></div>
+        <div><div class="chatbot-name">Asisten TugasKu</div><div class="chatbot-status">● Online</div></div>
+        <button data-action="chatToggle" class="chatbot-close" aria-label="Tutup"><i class="fas fa-times"></i></button></div>
+      <div class="chatbot-messages" id="chatMessages"></div>
+      <div class="chatbot-input-wrap"><input type="text" id="chatInput" placeholder="Ketik pertanyaan..." /><button data-action="chatSend" id="chatSendBtn" aria-label="Kirim"><i class="fas fa-paper-plane"></i></button></div>
+    </div>
+    <button class="chatbot-toggle" data-action="chatToggle" aria-label="Asisten"><i class="fas fa-robot"></i><span class="chatbot-label">AI</span></button>
+  </div>
+
+  <div id="toastContainer" class="toast-container" aria-live="polite"></div>
+
+  <script src="js/config.js"></script>
+  <script src="js/util.js"></script>
+  <script src="js/data.js"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/views-tasks.js"></script>
+  <script src="js/views-monitor.js"></script>
+  <script src="js/views-schedule.js"></script>
+  <script src="js/views-misc.js"></script>
+  <script src="js/chatbot.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
