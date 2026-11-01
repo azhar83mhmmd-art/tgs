@@ -19,6 +19,7 @@ Urutan: **Supabase → konfigurasi → deploy**. Estimasi 20 menit. Aman untuk p
    | `07_pengingat.sql` | pengingat H-3/H-1/H-0/overdue + Exam Alert H-1 + jadwal `pg_cron` | 01, 02, 06 |
    | `08_migrasi_kelasku.sql` | pindahkan data KelasKu lama & kunci tabel lama (tidak berefek di project baru) | 01–07 |
    | `09_realtime_storage.sql` | Realtime + bucket foto profil | 01–06 |
+   | `11_push_diagnostik.sql` | Tombol **Kirim notifikasi tes** & **Diagnosis** di Pusat Notifikasi (untuk memeriksa rantai Web Push) | 06 |
    | `10_daftar_tanpa_email.sql` | **Pendaftaran tanpa email** — memperbaiki error *"Email address ... is invalid"* dan *"email rate limit exceeded"* saat Daftar Akun | 00–01 |
 
    Mau tambah/ubah satu fitur saja (mis. tugas)? Cukup jalankan ulang file fitur itu. Perhatikan pesan *NOTICE*:
