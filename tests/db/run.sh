@@ -13,6 +13,8 @@ for run in 1 2; do
   echo "== sql/*.sql (putaran $run: $([ $run = 1 ] && echo migrasi || echo idempotensi)) =="
   for f in ../../sql/[0-9]*.sql; do $P $DB -f "$f"; done
 done
+echo "== status & riwayat (sql/12) =="
+$P $DB -f 03_status_riwayat.sql
 echo "== assertions =="
 $P $DB -f 02_assertions.sql
 echo "SEMUA UJI LULUS"
