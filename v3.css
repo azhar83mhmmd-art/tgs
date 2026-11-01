@@ -148,3 +148,6 @@ body.modal-open { overflow: hidden; }
 .notif-dot { display: none; position: absolute; top: -5px; right: -5px; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 99px;
   background: var(--danger); color: #fff; font: 700 10.5px/19px var(--font); text-align: center; border: 2px solid #fff; box-sizing: content-box; }
 .notif-dot.show { display: block; }
+
+.time-input { padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; font: inherit; background: var(--card-bg, #fff); color: inherit; min-height: 40px; }
+.toggle-row.is-off .time-input { opacity: .5; }
