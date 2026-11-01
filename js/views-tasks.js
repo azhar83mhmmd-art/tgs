@@ -10,6 +10,7 @@ function statusBadge(t) {
   if (isGuru()) return '';
   if (myDone(t.id)) return `<span class="status-pill done"><i class="fas fa-circle-check"></i> Sudah Selesai</span>`;
   if (isOverdue(t)) return `<span class="status-pill overdue"><i class="fas fa-triangle-exclamation"></i> Overdue</span>`;
+  if (myStatus(t.id) === 'proses') return `<span class="status-pill proses"><i class="fas fa-pen"></i> Sedang Dikerjakan</span>`;
   return `<span class="status-pill todo"><i class="far fa-circle"></i> Belum Selesai</span>`;
 }
 function progressBar(p, cls = '') {
@@ -148,64 +149,29 @@ function taskCard(t) {
 ACTIONS.taskFilter = a => { taskFilter = a.dataset.v; VIEWS.tugas($('#view')); };
 document.addEventListener('change', e => { const a = e.target.closest('[data-action-change]'); if (a?.dataset.actionChange === 'taskSubject') { taskSubject = a.value; VIEWS.tugas($('#view')); } });
 
-/* ----- Status tugas siswa ----- */
+/* ----- Status tugas siswa (tombol cepat di kartu & dashboard: Belum <-> Sudah Selesai) ----- */
 async function setDone(taskId, done) {
   if (isGuru()) return;
+  const status = done ? 'selesai' : 'belum';
   const prev = statusRow(taskId, state.me.id), prevCopy = prev ? { ...prev } : null;
   const nowISO = new Date().toISOString();
-  if (prev) { prev.is_done = done; prev.updated_at = nowISO; }
-  else state.statuses.push({ task_id: taskId, student_id: state.me.id, is_done: done, updated_at: nowISO });
+  if (prev) { prev.is_done = done; prev.status = status; prev.updated_at = nowISO; }
+  else state.statuses.push({ task_id: taskId, student_id: state.me.id, is_done: done, status, updated_at: nowISO });
   updateBadges(); rerenderSoft(); refreshOpenModal();
-  const { data, error } = await sb.from('task_status')
-    .upsert({ task_id: taskId, student_id: state.me.id, is_done: done }, { onConflict: 'task_id,student_id' }).select().single();
+  const { data, error } = await persistStatus(taskId, status);
   if (error) {                                            // batalkan perubahan optimistis
     if (prevCopy) Object.assign(statusRow(taskId, state.me.id), prevCopy);
     else state.statuses = state.statuses.filter(s => !(s.task_id === taskId && s.student_id === state.me.id));
     updateBadges(); rerenderSoft(); refreshOpenModal();
     return showToast('Gagal menyimpan status: ' + errMsg(error), 'error');
   }
-  Object.assign(statusRow(taskId, state.me.id), data);
-  showToast(done ? 'Ditandai Sudah Selesai ✓' : 'Diubah menjadi Belum Selesai', done ? 'success' : 'info');
+  const row = statusRow(taskId, state.me.id); Object.assign(row, data); row.status = data.status || status;
+  showToast(done ? 'Ditandai Sudah Selesai' : 'Diubah menjadi Belum Dikerjakan', done ? 'success' : 'info');
 }
 ACTIONS.setDone = (a, e) => { e.stopPropagation(); setDone(a.dataset.id, a.dataset.done === '1'); };
 
-/* ----- Detail tugas ----- */
+/* ----- Detail tugas: lihat js/task-detail.js (openTask, refreshOpenModal) ----- */
 ACTIONS.openTask = a => openTask(a.dataset.id);
-function openTask(id, silent) {
-  const t = state.tasks.find(x => x.id === id); if (!t) return closeModal();
-  const cd = getCountdown(t.deadline), g = isGuru();
-  if (!g && !silent) sb.rpc('log_task_view', { p_task: id }).then(() => {});
-  let extra;
-  if (g) {
-    const p = taskProgress(t);
-    extra = `<div class="modal-submit-section"><h4>📊 Penyelesaian Siswa</h4>
-      <div class="progress-wrap"><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:${p.pct}%"></div></div><span>${p.pct}%</span></div>
-      <p class="muted">${p.done} selesai · ${p.belum} belum selesai · ${p.total} siswa</p>
-      <div class="modal-actions">
-        <button class="btn-secondary" data-action="go" data-route="monitor" data-key="task" data-id="${t.id}"><i class="fas fa-list-check"></i> Task Monitor</button>
-        <button class="btn-secondary" data-action="editTask" data-id="${t.id}"><i class="fas fa-pen"></i> Edit</button>
-        <button class="btn-danger" data-action="deleteTask" data-id="${t.id}"><i class="fas fa-trash"></i> Hapus</button></div></div>`;
-  } else {
-    const row = statusRow(t.id, state.me.id), done = !!row?.is_done;
-    extra = `<div class="modal-submit-section"><h4>Status Tugasmu</h4>
-      <div class="status-choice">
-        <button class="choice ${done ? 'active done' : ''}" data-action="setDone" data-id="${t.id}" data-done="1"><i class="fas fa-circle-check"></i> ✓ Sudah Selesai</button>
-        <button class="choice ${!done ? 'active todo' : ''}" data-action="setDone" data-id="${t.id}" data-done="0"><i class="far fa-circle"></i> ○ Belum Selesai</button></div>
-      <p class="muted">${row ? `Terakhir diperbarui ${fmtDateTime(row.updated_at)}` : 'Belum pernah diubah (default: Belum Selesai)'}</p></div>`;
-  }
-  openModal(`<div data-task="${t.id}"><div class="modal-mapel-tag"><span class="mapel-tag ${mapelClass(t.subject)}">${esc(t.subject)}</span> ${kelasTag(t.class_id)} ${statusBadge(t)}</div>
-    <div class="modal-title">${esc(t.title)}</div><div class="modal-desc">${nl2br(t.description) || '<em>Tidak ada deskripsi.</em>'}</div>
-    <div class="modal-info-grid">
-      <div class="modal-info-item"><div class="modal-info-label">Diberikan</div><div class="modal-info-value">${fmtDate(t.assigned_date + 'T12:00:00+07:00')}</div></div>
-      <div class="modal-info-item"><div class="modal-info-label">Deadline</div><div class="modal-info-value">${fmtDateTime(t.deadline)}</div></div>
-      <div class="modal-info-item"><div class="modal-info-label">Sisa Waktu</div><div class="modal-info-value"><span class="countdown-badge ${cd.type}">${cd.text}</span></div></div>
-      <div class="modal-info-item"><div class="modal-info-label">Kelas</div><div class="modal-info-value">${esc(className(t.class_id))}</div></div></div>
-    ${extra}</div>`);
-}
-function refreshOpenModal() {
-  if ($('#modalOverlay').classList.contains('hidden')) return;
-  const id = $('#modalContent [data-task]')?.dataset.task; if (id) openTask(id, true);
-}
 ACTIONS.deleteTask = async a => {
   const t = state.tasks.find(x => x.id === a.dataset.id); if (!t) return;
   if (!await confirmDialog({ title: 'Hapus tugas ini?', message: `"${t.title}" beserta status penyelesaian seluruh siswa akan dihapus permanen.` })) return;
