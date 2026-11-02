@@ -22,18 +22,27 @@ const PWA = (() => {
     document.querySelectorAll('[data-install-ui]').forEach(el => { el.hidden = !show; });
   }
 
+  /* Menunggu event install dari browser (maks. `ms`). Chrome kadang baru mengirimnya beberapa detik setelah halaman dibuka. */
+  const waitEvt = ms => new Promise(res => {
+    if (evt()) return res(evt());
+    const done = () => { clearTimeout(t); window.removeEventListener('tk-install-ready', done); res(evt()); };
+    const t = setTimeout(done, ms); window.addEventListener('tk-install-ready', done);
+  });
+  let busy = false;
   async function install() {
     if (standalone()) return showToast('TugasKu sudah berjalan sebagai aplikasi.', 'info');
-    const e = evt();
-    if (!e) return showGuide();
-    window.__tkInstall = null;                                  // prompt() hanya bisa dipakai sekali
+    if (busy) return; busy = true;
     try {
-      await e.prompt();
-      const { outcome } = await e.userChoice;
-      if (outcome === 'accepted') showToast('Memasang TugasKu… cek layar utama / daftar aplikasimu.', 'success');
-      else showToast('Instalasi dibatalkan. Kamu bisa mencoba lagi kapan saja lewat tombol Install Aplikasi.', 'info');
-    } catch { showGuide(); }
-    refresh();
+      let e = evt();
+      if (!e && !isIOS && !inApp && !isFirefox) { showToast('Menyiapkan instalasi…', 'info'); e = await waitEvt(4000); }   // browser yang mendukung install satu-ketukan
+      if (!e) return showGuide();
+      window.__tkInstall = null;                                // prompt() hanya bisa dipakai sekali
+      try {
+        await e.prompt();
+        const { outcome } = await e.userChoice;
+        showToast(outcome === 'accepted' ? 'Memasang TugasKu… cek layar utama / daftar aplikasimu.' : 'Instalasi dibatalkan. Ketuk Install Aplikasi lagi kapan saja.', outcome === 'accepted' ? 'success' : 'info');
+      } catch { showGuide(); }
+    } finally { busy = false; refresh(); }
   }
 
   function guideSteps() {
@@ -48,10 +57,9 @@ const PWA = (() => {
       'Di iPhone, instalasi paling andal lewat <b>Safari</b>. Salin tautan ini lalu buka di Safari.',
       'Ketuk ikon <b>Bagikan</b> <i class="fas fa-arrow-up-from-bracket"></i> → <b>Tambah ke Layar Utama</b>.',
       'Ketuk <b>Tambah</b>.'] };
-    if (isAndroid) return { title: 'Install di Android', steps: [
-      `Ketuk menu <b>⋮</b> di pojok kanan atas ${isFirefox ? 'Firefox' : 'browser'}.`,
-      'Pilih <b>Instal aplikasi</b> atau <b>Tambahkan ke layar utama</b>.',
-      'Ketuk <b>Instal</b>. Ikon TugasKu muncul di layar utama.'] };
+    if (isAndroid) return { title: 'Install tidak tersedia dari sini', steps: [
+      'Browser tidak mengirim izin install untuk halaman ini. Biasanya karena <b>TugasKu sudah terpasang</b> di HP ini — cari ikon TugasKu di layar utama atau daftar aplikasi.',
+      'Kalau belum terpasang: menu <b>⋮</b> → <b>Instal aplikasi</b>. Kalau menunya tidak ada, muat ulang halaman lalu ketuk Install Aplikasi lagi.'] };
     if (isFirefox) return { title: 'Install di komputer', steps: [
       'Firefox di komputer belum mendukung instalasi aplikasi web.',
       'Buka TugasKu di <b>Chrome</b> atau <b>Edge</b>, lalu ketuk <b>Install Aplikasi</b> lagi.'] };
