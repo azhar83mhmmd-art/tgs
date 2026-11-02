@@ -26,7 +26,7 @@
         { id: 'n1', user_id: 's1', type: 'new_task', title: '📚 Misi Baru Telah Tiba!', body: 'Guru baru saja memberikan tugas IPA. Jangan sampai tertinggal! Buka TugasKu dan cek detail tugasmu.', class_id: 'c1', ref_id: 't1', data: { task_id: 't1' }, read_at: null, created_at: now() },
         { id: 'n2', user_id: 's1', type: 'reminder_h1', title: '🚨 BESOK DEADLINE!', body: 'Tugas Bahasa Indonesia masih menunggumu! Waktu tersisa hanya 24 jam. Pastikan tugasmu selesai sebelum batas waktu berakhir.', class_id: 'c1', ref_id: 't3', data: { task_id: 't3' }, read_at: null, created_at: now() },
         { id: 'n3', user_id: 'g1', type: 'teacher_overdue', title: '⚠️ PERHATIAN! TUGAS BELUM SELESAI', body: 'Tugas PR Matematika', class_id: 'c1', ref_id: 't2', data: { task_id: 't2' }, read_at: null, created_at: now() }],
-      notification_settings: [], activity_logs: [], notification_logs: [], push_subscriptions: [],
+      notification_settings: [], activity_logs: [], notification_logs: [], push_subscriptions: [], book_collections: [],
     };
   }
   let db = JSON.parse(localStorage.getItem(KEY) || 'null') || seed();
@@ -54,7 +54,15 @@
   bc.onmessage = e => { db = JSON.parse(localStorage.getItem(KEY)); fire(e.data.table, e.data.eventType, e.data.row, e.data.old); };
 
   // pengganti trigger database
+  function bookNotify(b, kind) {      // meniru trigger sql/16
+    db.class_members.filter(m => m.class_id === b.class_id && m.member_role === 'siswa').forEach(m => {
+      const n = { id: uid(), user_id: m.user_id, type: kind, title: kind === 'book_collected' ? '📚 Buku ' + b.subject + ' dikumpulkan' : '📖 Buku ' + b.subject + ' sudah dibagikan',
+        body: 'Buku ' + b.subject, class_id: b.class_id, ref_id: b.id, data: { url: '#/buku' }, read_at: null, created_at: now(), action_token: uid() };
+      db.notifications.unshift(n); emit('notifications', 'INSERT', n);
+    });
+  }
   function afterInsert(table, r) {
+    if (table === 'book_collections') bookNotify(r, 'book_collected');
     if (table === 'tasks') db.class_members.filter(m => m.class_id === r.class_id && m.member_role === 'siswa').forEach(m => {
       const n = { id: uid(), user_id: m.user_id, type: 'new_task', title: '📚 Misi Baru Telah Tiba!', body: `Guru baru saja memberikan tugas ${r.subject}. Jangan sampai tertinggal! Buka TugasKu dan cek detail tugasmu.`, class_id: r.class_id, ref_id: r.id, data: { task_id: r.id, url: '#/tugas?task=' + r.id }, read_at: null, created_at: now() };
       db.notifications.unshift(n); emit('notifications', 'INSERT', n);
@@ -91,6 +99,7 @@
         if (!r.id && !['task_status', 'class_members', 'notification_settings'].includes(t)) r.id = uid();
         if (t === 'classes') r.join_code = r.join_code || ('J' + uid().slice(0, 7).toUpperCase());
         r.created_at ||= now();
+        if (t === 'book_collections') Object.assign(r, { status: 'dikumpul', collected_at: now(), returned_at: null });
         if (t === 'notification_settings' && !rows.some(x => x.user_id === r.user_id)) Object.assign(r, { new_task: true, reminder: true, announcement: true, schedule: true, reminder_time: null }, raw);   // default kolom seperti di database
         const pk = t === 'notification_settings' ? (x => x.user_id) : (x => key(t, x));
         const ex = rows.find(x => pk(x) === pk(r));
@@ -102,7 +111,9 @@
           (db.task_status_history ||= []).push(h);
         }
       }
-    } else if (q.op === 'update') { out = rows.filter(match); out.forEach(r => { const old = { ...r }; Object.assign(r, q.patch); emit(t, 'UPDATE', r, old); }); }
+    } else if (q.op === 'update') { out = rows.filter(match); out.forEach(r => { const old = { ...r }; Object.assign(r, q.patch);
+      if (t === 'book_collections' && r.status !== old.status) { if (r.status === 'dibagikan') r.returned_at = now(); else { r.collected_at = now(); r.returned_at = null; } bookNotify(r, r.status === 'dikumpul' ? 'book_collected' : 'book_returned'); }
+      emit(t, 'UPDATE', r, old); }); }
     else if (q.op === 'delete') { out = rows.filter(match); db[t] = rows.filter(r => !match(r)); out.forEach(r => emit(t, 'DELETE', {}, r)); if (t === 'tasks') out.forEach(o => { db.task_status = db.task_status.filter(s => s.task_id !== o.id); }); }
     if (q.order) { const [k, asc] = q.order; out = [...out].sort((a, b) => (a[k] > b[k] ? 1 : a[k] < b[k] ? -1 : 0) * (asc ? 1 : -1)); }
     if (q.range) out = out.slice(q.range[0], q.range[1] + 1);
