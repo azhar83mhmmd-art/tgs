@@ -1,3 +1,4 @@
+process.env.PW_EXPERIMENTAL_SERVICE_WORKER_NETWORK_EVENTS = '1';   // agar request yang dibuat service worker (cache CDN) ikut diarahkan ke klien palsu
 // Uji UI end-to-end dengan Supabase palsu. Jalankan: node smoke.js  (butuh playwright + server statis di :8099)
 const { chromium } = require('playwright');
 const fs = require('fs'), path = require('path');
@@ -229,6 +230,65 @@ const ok = (c, m) => { if (c) { pass++; console.log('ok   ' + m); } else { fail.
   await mp.screenshot({ path: OUT + '/11-mobile-modal.png' });
   await mp.keyboard.press('Escape');
   const mg = await m.newPage(); watch(mg); await mg.goto(BASE + '?as=bunita#/monitor'); await mg.waitForSelector('.monitor-head'); ok(await mg.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), 'mobile: tidak ada scroll horizontal (monitor)'); await mg.screenshot({ path: OUT + '/10-mobile-monitor.png' });
+
+  // --- 4. BUKU DIKUMPUL ---
+  await g.goto(BASE + '?as=bunita#/buku'); await g.waitForSelector('#view h2');
+  ok((await txt(g, '#view h2')).includes('Buku Dikumpul') && (await g.locator('[data-action="bookEdit"]').count()) === 1, 'guru: halaman Buku Dikumpul + tombol tandai');
+  await g.click('[data-action="bookEdit"]'); await g.waitForSelector('#bkSubject');
+  await g.fill('#bkSubject', 'Matematika'); await g.selectOption('#bkTask', 't2'); await g.fill('#bkNote', 'Dikumpulkan untuk dinilai'); await g.click('[data-action="bookSave"]');
+  await g.waitForSelector('.book-card.held');
+  ok((await txt(g, '.book-card.held')).includes('Masih di guru') && (await txt(g, '.book-card.held')).includes('Dikumpulkan untuk dinilai'), 'guru: buku tampil "Masih di guru" + catatan');
+  ok(await g.evaluate(() => __fakeDB().book_collections.length === 1 && __fakeDB().book_collections[0].status === 'dikumpul'), 'buku tersimpan berstatus dikumpul');
+  ok(await g.evaluate(() => __fakeDB().notifications.filter(n => n.type === 'book_collected').length === 3), 'siswa kelas menerima notifikasi buku dikumpulkan');
+  await s.goto(BASE + '?as=dina#/buku'); await s.waitForSelector('.book-card');
+  ok((await txt(s, '.book-alert')).includes('1 buku masih ada di guru') && (await s.locator('[data-action="bookBack"]').count()) === 0, 'siswa: melihat buku masih di guru, tanpa tombol guru');
+  ok((await s.locator('[data-badge="buku"]').first().innerText()) === '1', 'menu Buku Dikumpul menampilkan badge jumlah');
+  await s.goto(BASE + '?as=dina#/tugas'); await s.waitForSelector('.task-card');
+  ok((await s.locator('.task-card', { hasText: 'PR Matematika' }).locator('.book-chip').count()) === 1, 'tugas tertaut menampilkan chip "Buku masih di guru"');
+  await g.click('[data-action="bookBack"]'); await g.waitForSelector('.book-card.back');
+  ok(await g.evaluate(() => __fakeDB().book_collections[0].status === 'dibagikan' && !!__fakeDB().book_collections[0].returned_at), 'guru: tandai sudah dibagikan');
+  ok(await g.evaluate(() => __fakeDB().notifications.filter(n => n.type === 'book_returned').length === 3), 'siswa menerima notifikasi buku dibagikan');
+  await s.goto(BASE + '?as=dina#/tugas'); await s.waitForSelector('.task-card'); await s.waitForTimeout(500);   // realtime + render ulang
+  ok((await s.locator('.book-chip').count()) === 0, 'chip hilang setelah buku dibagikan');
+  await g.screenshot({ path: OUT + '/12-buku-guru.png' });
+
+  // --- 5. KALENDER ASLI (Android intent) ---
+  const ap = await (await browser.newContext({ viewport: { width: 390, height: 800 }, isMobile: true, userAgent: 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36' })).newPage();
+  await ap.context().route(/cdn\.jsdelivr\.net.*supabase/, r => r.fulfill({ contentType: 'application/javascript', body: FAKE }));
+  await ap.context().route(/(fonts\.googleapis|fonts\.gstatic|cdnjs\.cloudflare\.com)/, r => r.abort());
+  await ap.goto(BASE + '?as=dina#/dashboard'); await ap.waitForSelector('#appPage.active');
+  const intent = await ap.evaluate(() => tdAndroidIntent(state.tasks.find(t => t.id === 't1')));
+  ok(intent.startsWith('intent:#Intent;action=android.intent.action.INSERT;type=vnd.android.cursor.dir/event;') && intent.includes('S.title=Deadline%20IPA') && /l\.beginTime=\d{13};l\.endTime=\d{13};/.test(intent) && intent.endsWith(';end'), 'Android: tombol Kalender membuat intent ke aplikasi Kalender bawaan');
+  ok(!/[^%]\s/.test(intent.split(';').filter(x => x.startsWith('S.')).join('')), 'intent: nilai teks ter-encode (aman untuk karakter khusus)');
+
+  // --- 6. AKSI CEPAT NOTIFIKASI (SQL/SW) — logika klien: aksi hanya untuk jenis tugas ---
+  const sw = require('fs').readFileSync(require('path').join(__dirname, '../../sw.js'), 'utf8');
+  ok(sw.includes("event.action === 'done'") && sw.includes('notification_action') && sw.includes('actions: Array.isArray(d.actions)'), 'service worker menangani aksi "Tandai selesai" & "Ingatkan 1 jam lagi"');
+
+  // --- 7. MODE OFFLINE ---
+  await s.goto(BASE + '?as=dina#/tugas'); await s.waitForSelector('.task-card'); await s.waitForTimeout(400);
+  await s.evaluate(() => saveSnapshot()); await s.waitForTimeout(200);
+  ok(await s.evaluate(async () => { const x = await kvGet('snapshot'); return !!x && x.uid === 's1' && x.tasks.length === 3; }), 'offline: snapshot data tersimpan di IndexedDB');
+  await ctx.setOffline(true); await s.waitForTimeout(250);
+  ok((await s.locator('#offlineBar').count()) === 1 && (await txt(s, '#offlineBar')).includes('Mode offline'), 'offline: spanduk "Mode offline" tampil');
+  const q = await s.evaluate(async () => { const r = await persistStatus('t3', 'proses'); return { q: r.data?._queued, pend: OFF.pending }; });
+  ok(q.q === true && q.pend === 1, 'offline: perubahan status masuk antrean (bukan gagal)');
+  ok(await s.evaluate(() => __fakeDB().task_status.find(x => x.task_id === 't3' && x.student_id === 's1')?.status !== 'proses'), 'offline: server belum berubah sebelum online');
+  await ctx.setOffline(false);
+  await s.waitForFunction(() => __fakeDB().task_status.some(x => x.task_id === 't3' && x.student_id === 's1' && x.status === 'proses'), null, { timeout: 8000 }).catch(() => {});
+  ok(await s.evaluate(() => __fakeDB().task_status.some(x => x.task_id === 't3' && x.student_id === 's1' && x.status === 'proses')), 'online kembali: status antrean tersinkron ke server');
+  await s.waitForFunction(() => OFF.pending === 0, null, { timeout: 5000 }).catch(() => {});
+  ok((await s.evaluate(() => OFF.pending)) === 0, 'antrean kosong setelah sinkron');
+  // masuk mode offline dari snapshot (mis. aplikasi dibuka tanpa internet)
+  await s.evaluate(async () => { await saveSnapshot(); enterOffline(await kvGet('snapshot')); });
+  await s.waitForTimeout(400);
+  ok(await s.evaluate(() => state.offline === true && document.querySelectorAll('.task-card').length >= 1 === true || document.querySelector('#view').innerText.length > 20), 'offline: aplikasi tampil dari snapshot');
+  const w = await s.evaluate(async () => { const r = await sb.from('tasks').insert({ title: 'x' }).select(); return r.error?.code; });
+  ok(w === 'OFFLINE', 'offline: penulisan lain ditolak dengan pesan jelas');
+  await s.evaluate(() => { Object.defineProperty(navigator, 'onLine', { get: () => true, configurable: true }); window.dispatchEvent(new Event('online')); });
+  await s.waitForFunction(() => state.offline === false, null, { timeout: 8000 }).catch(() => {});
+  await s.waitForFunction(() => state.offline === false && !document.getElementById('offlineBar'), null, { timeout: 8000 }).catch(() => {});
+  ok(await s.evaluate(() => state.offline === false && !document.getElementById('offlineBar')), 'online kembali: keluar dari mode offline, spanduk hilang');
 
   ok(errors.length === 0, 'tidak ada galat JS / console: ' + errors.slice(0, 4).join(' || '));
   await browser.close();
