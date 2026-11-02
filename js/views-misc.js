@@ -52,8 +52,8 @@ ACTIONS.deleteAnn = async a => {
 
 /* ---------- Pusat Notifikasi ---------- */
 let notifTab = 'semua';
-const NOTIF_STYLE = { new_task: 'n-new', new_task_alert: 'n-new', reminder_h3: 'n-warn', reminder_h1: 'n-urgent', reminder_h0: 'n-urgent', overdue: 'n-over', teacher_overdue: 'n-over', announcement: 'n-info', schedule: 'n-info', exam_alert: 'n-warn', deadline_changed: 'n-warn', status_updated: 'n-new' };
-const NOTIF_LABEL = { new_task: 'Tugas Baru', new_task_alert: 'Tugas Baru', reminder_h3: 'Pengingat H-3', reminder_h1: 'Pengingat H-1', reminder_h0: 'Deadline Hari Ini', overdue: 'Overdue', teacher_overdue: 'Peringatan Guru', announcement: 'Pengumuman', schedule: 'Jadwal', exam_alert: 'Ujian Besok', deadline_changed: 'Deadline Berubah', status_updated: 'Status Diperbarui' };
+const NOTIF_STYLE = { new_task: 'n-new', new_task_alert: 'n-new', reminder_h3: 'n-warn', reminder_h1: 'n-urgent', reminder_h0: 'n-urgent', overdue: 'n-over', teacher_overdue: 'n-over', announcement: 'n-info', schedule: 'n-info', exam_alert: 'n-warn', deadline_changed: 'n-warn', status_updated: 'n-new', book_collected: 'n-warn', book_returned: 'n-new' };
+const NOTIF_LABEL = { new_task: 'Tugas Baru', new_task_alert: 'Tugas Baru', reminder_h3: 'Pengingat H-3', reminder_h1: 'Pengingat H-1', reminder_h0: 'Deadline Hari Ini', overdue: 'Overdue', teacher_overdue: 'Peringatan Guru', announcement: 'Pengumuman', schedule: 'Jadwal', exam_alert: 'Ujian Besok', deadline_changed: 'Deadline Berubah', status_updated: 'Status Diperbarui', book_collected: 'Buku Dikumpul', book_returned: 'Buku Dibagikan' };
 
 function notifItem(n) {
   return `<div class="notif-card ${NOTIF_STYLE[n.type] || ''} ${n.read_at ? '' : 'unread'}" data-action="openNotif" data-id="${n.id}">
@@ -157,7 +157,7 @@ ACTIONS.askPerm = async () => { await Notification.requestPermission(); renderRo
    Aturan & pencegah duplikat sama persis dengan scheduler pg_cron (idempoten, aman diulang). Hanya siswa. */
 let remindersBusy = false;
 async function runMyReminders() {
-  if (remindersBusy || !state.session || !state.loaded || isGuru()) return null;
+  if (remindersBusy || !state.session || !state.loaded || isGuru() || isOffline()) return null;
   remindersBusy = true;
   try { const { data, error } = await sb.rpc('run_my_reminders'); if (error) throw error; return data; }
   catch (e) { console.warn('run_my_reminders:', e.message || e); return null; }   // sql/13 belum dijalankan -> abaikan diam-diam
@@ -167,7 +167,7 @@ ACTIONS.remindNow = async () => {
   if (isGuru()) return showToast('Pengingat deadline hanya untuk akun siswa.', 'info');
   const d = await runMyReminders();
   if (!d) return showToast('Gagal memeriksa pengingat — jalankan sql/13_perbaikan_pengingat.sql di Supabase.', 'error');
-  const n = (d.student_notifications || 0) + (d.exam_notifications || 0);
+  const n = (d.student_notifications || 0) + (d.exam_notifications || 0) + (d.snoozed_notifications || 0);
   showToast(n ? n + ' pengingat baru dibuat.' : 'Tidak ada pengingat yang jatuh tempo saat ini.', 'success');
 };
 
@@ -190,6 +190,7 @@ async function enablePush() {
 /* Saat aplikasi dibuka: pastikan langganan push perangkat ini masih tersimpan di server (browser bisa memutar endpoint). */
 async function syncPush() {
   try {
+    if (isOffline()) return;
     if (pushState() === 'unsupported' || pushState() === 'unconfigured' || Notification.permission !== 'granted') return;
     const reg = await navigator.serviceWorker.ready;
     const sub = await reg.pushManager.getSubscription() ||
