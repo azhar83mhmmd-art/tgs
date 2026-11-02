@@ -24,6 +24,8 @@ Urutan: **Supabase → konfigurasi → deploy**. Estimasi 20 menit. Aman untuk p
    | `13_perbaikan_pengingat.sql` | **Perbaikan pengingat deadline** (H-3, H-1, hari-H, overdue, perubahan deadline tidak muncul): pengingat tidak lagi tersangkut catatan "dilewati", satu baris gagal tidak menggagalkan semua, ada **cadangan** saat aplikasi dibuka bila `pg_cron` mati, dan **Diagnosis** kini menampilkan status pengingat. **Cukup jalankan file ini** pada database yang sudah jalan (isinya juga sudah ada di `06` & `07` untuk instalasi baru) | 00–07 |
    | `14_jam_pengingat.sql` | **Jam pengingat bisa diatur sendiri** oleh tiap siswa (mis. 07:00 atau 05:30 WIB) di Notifikasi → Pengaturan → *Jam pengingat*. Kosong = bawaan 07:00. Jalankan sesudah `13` | 06, 07 |
    | `15_penjelasan_pengingat.sql` | **Diagnosis per tugas**: menjelaskan kenapa pengingat sudah/belum terkirim (menunggu jam, tugas terlalu baru, belum waktunya, atau scheduler belum jalan) | 02, 06, 07 |
+   | `16_buku_dikumpul.sql` | **Buku Dikumpul**: guru menandai buku suatu mapel masih berada di guru (belum dibagikan ke siswa) → "sudah dibagikan"; siswa melihat statusnya + notifikasi; opsional tertaut ke tugas | 01, 02, 06 |
+   | `17_aksi_notifikasi.sql` | **Aksi cepat di notifikasi HP** ("Tandai selesai", "Ingatkan 1 jam lagi"). **Jalankan terakhir** (memperbarui jadwal pg_cron). Setelah itu **deploy ulang Edge Function `send-push`** (isinya berubah: menambah tombol aksi) | 02, 06, 07 |
    | `10_daftar_tanpa_email.sql` | **Pendaftaran tanpa email** — memperbaiki error *"Email address ... is invalid"* dan *"email rate limit exceeded"* saat Daftar Akun | 00–01 |
 
    Mau tambah/ubah satu fitur saja (mis. tugas)? Cukup jalankan ulang file fitur itu. Perhatikan pesan *NOTICE*:
@@ -116,3 +118,13 @@ cd tests/db && PGHOST=<socket> PGPORT=5432 PGUSER=postgres ./run.sh   # migrasi,
 cd tests/ui && node smoke.js                                          # UI end-to-end dengan Supabase palsu
 cd tests/ui && node sw-test.js                                        # service worker: push -> notifikasi, ikon PNG, manifest
 ```
+
+
+## Fitur tambahan: kalender asli, aksi cepat notifikasi, mode offline
+
+- **Tambah ke kalender (Android):** tombol *Kalender* di detail tugas membuka layar *Tambah acara* di **aplikasi Kalender bawaan HP** (judul, deskripsi, jam sudah terisi). Pengingat/alarm mengikuti pengaturan bawaan aplikasi Kalender. Bila tidak terbuka, otomatis memakai file `.ics`. iPhone/komputer tetap memakai `.ics`.
+- **Aksi cepat di notifikasi:** notifikasi tugas (tugas baru, H-3, H-1, hari-H, overdue, deadline berubah) punya tombol **Tandai selesai** dan **Ingatkan 1 jam lagi**. Butuh `sql/17` + deploy ulang `send-push`. "Ingatkan 1 jam lagi" diproses `pg_cron` (±5 menit) atau saat aplikasi dibuka.
+- **Mode offline:** setelah pernah dibuka online, aplikasi (kerangka dari service worker + data terakhir di IndexedDB) tetap terbuka tanpa internet. Tugas, jadwal, pengumuman, buku, dan status bisa dilihat; **status tugas yang diubah offline** disimpan di antrean dan otomatis disinkronkan saat online (bila bentrok, perubahan terakhir menang). Fitur lain yang menulis ke server menampilkan pesan "butuh internet". Keluar (logout) menghapus data offline di perangkat.
+- **Buku Dikumpul:** menu *Buku Dikumpul*; siswa mendapat badge jumlah buku yang masih di guru dan chip *Buku masih di guru* pada tugas yang tertaut.
+
+- **Install aplikasi (PWA):** tombol **Install Aplikasi** tampil di halaman login, sidebar, dan topbar selama TugasKu belum terpasang. Di Chrome/Edge/Android satu ketukan langsung memunculkan dialog install; di iPhone Safari dan browser tanpa dialog, tombol menampilkan panduan langkah singkat. Tombol hilang otomatis setelah terpasang / saat dibuka sebagai aplikasi. Syarat: situs diakses lewat HTTPS (Vercel sudah otomatis).
