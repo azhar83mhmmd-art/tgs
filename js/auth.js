@@ -86,4 +86,5 @@ async function handleLogout() {
   unsubscribeRealtime();
   try { await disablePush(); } catch {}           // endpoint push milik perangkat ini tidak boleh terbawa ke akun lain
   await sb.auth.signOut();
+  await clearOfflineData();                        // data offline tidak boleh tertinggal di perangkat setelah keluar
 }
