@@ -138,7 +138,7 @@ function taskCard(t) {
   return `<div class="task-card ${done ? 'is-done' : ''} ${!done && isOverdue(t) ? 'is-overdue' : ''}" data-action="openTask" data-id="${t.id}">
     <div class="task-card-color-bar ${colorClass(t.subject)}"></div>
     <div class="task-card-body">
-      <div class="task-card-meta"><span class="mapel-tag ${mapelClass(t.subject)}">${esc(t.subject)}</span>${kelasTag(t.class_id)}${statusBadge(t)}</div>
+      <div class="task-card-meta"><span class="mapel-tag ${mapelClass(t.subject)}">${esc(t.subject)}</span>${kelasTag(t.class_id)}${statusBadge(t)}${bookChip(t)}</div>
       <div class="task-card-title">${esc(t.title)}</div>
       <div class="task-card-desc">${esc(t.description)}</div>
       ${g ? `<div class="task-prog">${progressBar(p.pct)}<small>${p.done}/${p.total} siswa selesai (${p.pct}%)</small></div>` : ''}
