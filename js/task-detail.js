@@ -65,7 +65,8 @@ function tdSig(t) {
 }
 
 /* ----- Potongan tampilan ----- */
-function tdPill(t) {
+function tdPill(t) { return tdPill0(t) + bookChip(t); }
+function tdPill0(t) {
   if (isGuru()) return isOverdue(t)
     ? `<span class="td-pill expired">${tdSvg('clock', 14)} Lewat deadline</span>`
     : `<span class="td-pill proses">${tdSvg('clock', 14)} Aktif</span>`;
@@ -186,7 +187,8 @@ function tdTick() {
 
 /* ----- Simpan status (database dulu, tampilan sesudahnya) ----- */
 const tdMissingColumn = e => !!e && (e.code === 'PGRST204' || e.code === '42703' || /column .*status|schema cache/i.test(e.message || ''));
-async function persistStatus(taskId, status) {
+async function persistStatus(taskId, status, opts = {}) {
+  if (!opts.noQueue && isOffline()) return queueStatus(taskId, status);          // offline: antre, sinkron saat online
   const base = { task_id: taskId, student_id: state.me.id };
   const up = payload => sb.from('task_status').upsert({ ...base, ...payload }, { onConflict: 'task_id,student_id' }).select().single();
   let r = await up({ status, is_done: status === 'selesai' });
@@ -194,6 +196,7 @@ async function persistStatus(taskId, status) {
     if (status === 'proses') return { data: null, error: { message: 'Status "Sedang Dikerjakan" butuh pembaruan database. Jalankan sql/12_status_riwayat.sql di Supabase.' } };
     r = await up({ is_done: status === 'selesai' });
   }
+  if (!opts.noQueue && r.error && isNetErr(r.error)) return queueStatus(taskId, status);   // jaringan putus saat menyimpan
   return r;
 }
 async function tdSetStatus(taskId, status) {
@@ -213,7 +216,8 @@ async function tdSetStatus(taskId, status) {
   const saved = statusRow(taskId, state.me.id); if (!saved.status || !TD_ORDER.includes(saved.status)) saved.status = status;
   updateBadges(); rerenderSoft();
   if (stillOpen) { TD.history = null; tdPatchStatus(); if (TD.historyOpen) tdLoadHistory(); }
-  showToast(status === 'selesai' ? 'Status diperbarui: Sudah Selesai' : `Status diperbarui: ${STATUS_LABEL[status]}`, 'success');
+  if (data?._queued) showToast('Disimpan offline — akan disinkronkan saat online.', 'success');
+  else showToast(status === 'selesai' ? 'Status diperbarui: Sudah Selesai' : `Status diperbarui: ${STATUS_LABEL[status]}`, 'success');
   if (status === 'selesai' && stillOpen) tdCelebrate();
 }
 /* Perbarui bagian status pada DOM yang sudah ada (agar transisi geser tetap halus) */
@@ -291,8 +295,25 @@ function tdIcs(t) {
     ...alarm('-P1D', `Besok deadline: ${t.title}`), ...alarm('-PT1H', `1 jam lagi deadline: ${t.title}`),
     'END:VEVENT', 'END:VCALENDAR'].map(icsFold).join('\r\n') + '\r\n';
 }
+/* Android: buka layar "Tambah acara" di APLIKASI KALENDER bawaan lewat intent (bukan web/Google Calendar di browser).
+   Pengingat (alarm) mengikuti pengaturan bawaan aplikasi kalender. Bila intent tidak terbuka -> cadangan file .ics. */
+const tdIsAndroid = () => /Android/i.test(navigator.userAgent);
+function tdAndroidIntent(t) {
+  const end = new Date(t.deadline).getTime(), start = end - 30 * 60000, enc = encodeURIComponent;
+  const desc = `Mata pelajaran: ${t.subject}\nKelas: ${className(t.class_id)}\nDeadline: ${fmtDateTime(t.deadline)}` + (t.description ? `\n\n${t.description}` : '');
+  return 'intent:#Intent;action=android.intent.action.INSERT;type=vnd.android.cursor.dir/event;'
+    + `S.title=${enc(`Deadline ${t.subject}: ${t.title}`)};S.description=${enc(desc.slice(0, 900))};l.beginTime=${start};l.endTime=${end};B.allDay=false;end`;
+}
 ACTIONS.tdCal = async a => {
   const t = state.tasks.find(x => x.id === a.dataset.id); if (!t) return;
+  if (tdIsAndroid()) {
+    let opened = false; const mark = () => { if (document.hidden) opened = true; };
+    document.addEventListener('visibilitychange', mark);
+    location.href = tdAndroidIntent(t);
+    await new Promise(r => setTimeout(r, 1500));
+    document.removeEventListener('visibilitychange', mark);
+    if (opened) return;                               // aplikasi Kalender terbuka
+  }
   const name = 'tugas-' + (t.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'deadline') + '.ics';
   const file = new File([tdIcs(t)], name, { type: 'text/calendar' });
   try {
