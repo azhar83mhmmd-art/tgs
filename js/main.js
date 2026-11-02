@@ -7,6 +7,7 @@ const NAV = [
   { id: 'insights',   icon: 'fa-chart-pie',    label: 'Class Insights', role: 'guru' },
   { id: 'jadwal',     icon: 'fa-calendar-days',label: 'Jadwal' },
   { id: 'pengumuman', icon: 'fa-bullhorn',     label: 'Pengumuman' },
+  { id: 'buku',       icon: 'fa-book',         label: 'Buku Dikumpul', badge: 'buku' },
   { id: 'notifikasi', icon: 'fa-bell',         label: 'Notifikasi', badge: 'notif' },
   { id: 'aktivitas',  icon: 'fa-clock-rotate-left', label: 'Aktivitas' },
   { id: 'kelas',      icon: 'fa-school',       label: 'Kelas' },
@@ -37,6 +38,8 @@ function updateBadges() {
   $$('[data-badge="notif"]').forEach(b => { b.textContent = un > 99 ? '99+' : un; b.style.display = un ? '' : 'none'; });
   const belum = !isGuru() ? scopedTasks().filter(t => !myDone(t.id) && !isOverdue(t)).length : 0;
   $$('[data-badge="tugas"]').forEach(b => { b.textContent = belum; b.style.display = belum ? '' : 'none'; });
+  const nb = state.booksReady ? heldBooks().length : 0;
+  $$('[data-badge="buku"]').forEach(b => { b.textContent = nb; b.style.display = nb ? '' : 'none'; });
   const dot = $('#notifDot'); if (dot) { dot.textContent = un > 9 ? '9+' : un || ''; dot.classList.toggle('show', un > 0); }
 }
 function renderClassPicker() {
@@ -86,7 +89,7 @@ function onRealtime(table, p) {
     if (st && t) { flashRow = s.task_id + '|' + s.student_id; setTimeout(() => flashRow = null, 2500); }
   }
   updateBadges(); renderClassPicker();
-  rerenderSoft();
+  rerenderSoft(); saveSnapshotSoon();
 }
 let flashRow = null;
 
@@ -97,7 +100,9 @@ async function browserNotify(n) {
   // tidak ada pengecualian untuk push server: `tag: n.id` membuat notifikasi yang sama saling menggantikan (tidak ganda),
   // dan notifikasi tetap tampil walau push server belum berfungsi.
   const opts = { body: n.body, tag: n.id, icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', vibrate: [200, 100, 200],
-                 data: { url: location.origin + location.pathname + (n.data?.url || '#/notifikasi') } };
+                 data: { url: location.origin + location.pathname + (n.data?.url || '#/notifikasi'), token: n.action_token || null } };
+  if (n.action_token && n.ref_id && ['new_task', 'reminder_h3', 'reminder_h1', 'reminder_h0', 'overdue', 'deadline_changed'].includes(n.type))
+    opts.actions = [{ action: 'done', title: 'Tandai selesai' }, { action: 'snooze', title: 'Ingatkan 1 jam lagi' }];   // aksi cepat (sql/17)
   try {
     const reg = await navigator.serviceWorker?.getRegistration();
     if (reg) reg.showNotification(n.title, opts); else new Notification(n.title, opts);
@@ -128,7 +133,11 @@ async function boot() {
     }
   });
   const { data } = await sb.auth.getSession();
-  if (!data.session) { $('#loadingScreen').classList.add('hidden'); $('#loginPage').classList.add('active'); }
+  if (!data.session) {
+    const snap = navigator.onLine === false ? await kvGet('snapshot') : null;       // offline & pernah login: buka data terakhir
+    if (snap) return enterOffline(snap);
+    $('#loadingScreen').classList.add('hidden'); $('#loginPage').classList.add('active');
+  }
 }
 
 /* Pengingat deadline: server (pg_cron) tetap yang utama; ini hanya memastikan pengingat yang jatuh tempo tidak terlewat
@@ -146,16 +155,22 @@ async function initApp() {
   $('#loadingScreen').classList.remove('hidden'); $('#loadingMsg').textContent = 'Memuat data...';
   $('#loginPage').classList.remove('active');
   try {
+    const snap = await kvGet('snapshot');
+    if (navigator.onLine === false && snap && snap.uid === state.session.user.id) return enterOffline(snap);
     await loadAll();
     if (!state.me) throw new Error('Profil tidak ditemukan. Jalankan file di folder sql/ (00 → 09) di Supabase.');
   } catch (e) {
     console.error(e);
+    const snap = isNetErr(e) ? await kvGet('snapshot') : null;                     // jaringan putus saat memuat -> pakai data terakhir
+    if (snap && snap.uid === state.session?.user?.id) return enterOffline(snap);
     $('#loadingScreen').classList.add('hidden');
     $('#loginPage').classList.add('active');
     showErr('#loginError', 'Gagal memuat data: ' + errMsg(e));
     state.session = null; await sb.auth.signOut().catch(() => {});
     return;
   }
+  await flushOutbox();                                         // perubahan status yang dibuat saat offline
+  saveSnapshot();
   $('#appPage').classList.add('active');
   $('#loadingScreen').classList.add('hidden');
   renderUserBox(); renderNav(); renderClassPicker();
@@ -171,7 +186,8 @@ async function initApp() {
 
 function onSignedOut() {
   state.session = null; state.loaded = false; unsubscribeRealtime();
-  Object.assign(state, { me: null, classes: [], members: [], tasks: [], statuses: [], announcements: [], schedules: [], notifications: [], activity: [], logs: [] });
+  Object.assign(state, { me: null, classes: [], members: [], tasks: [], statuses: [], announcements: [], schedules: [], notifications: [], activity: [], logs: [], books: [], offline: false });
+  unpatchOfflineClient(); updateOfflineBar();
   $('#pushBanner')?.remove(); $('#appPage').classList.remove('active'); $('#loadingScreen').classList.add('hidden');
   $('#loginPage').classList.add('active');
   $('#loginPassword').value = ''; closeModal(); setRTStatus('offline'); location.hash = '';
