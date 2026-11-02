@@ -22,6 +22,9 @@ const sb = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
 // Jenis yang hanya relevan selama siswa masih "Belum Selesai" (aturan 2 & 3).
 const ONLY_IF_NOT_DONE = new Set(["reminder_h3", "reminder_h1", "reminder_h0", "overdue", "deadline_changed"]);
 
+// Notifikasi tugas yang mendapat tombol aksi cepat di HP (butuh sql/17: kolom action_token)
+const QUICK_TYPES = new Set(["new_task", "reminder_h3", "reminder_h1", "reminder_h0", "overdue", "deadline_changed"]);
+
 const json = (o: unknown, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { "Content-Type": "application/json" } });
 
@@ -64,7 +67,14 @@ Deno.serve(async (req) => {
 
   // Deep link: hash rute di dalam aplikasi (disimpan trigger di notifications.data.url)
   const hash = typeof n.data?.url === "string" && n.data.url.startsWith("#") ? n.data.url : "#/notifikasi";
-  const payload = JSON.stringify({ title: n.title, body: n.body, tag: n.id, url: "./" + hash, type: n.type });
+  const quick = QUICK_TYPES.has(n.type) && n.ref_id && n.action_token;
+  const payload = JSON.stringify({
+    title: n.title, body: n.body, tag: n.id, url: "./" + hash, type: n.type,
+    ...(quick ? { token: n.action_token, actions: [
+      { action: "done", title: "Tandai selesai" },
+      { action: "snooze", title: "Ingatkan 1 jam lagi" },
+    ] } : {}),
+  });
 
   let sent = 0, failed = 0;
   for (const s of subs) {
