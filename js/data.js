@@ -3,7 +3,7 @@ const state = {
   me: null, session: null,
   classes: [], members: [], profiles: new Map(),
   tasks: [], statuses: [], announcements: [], schedules: [],
-  notifications: [], activity: [], logs: [],
+  notifications: [], activity: [], logs: [], books: [], booksReady: false, offline: false, offlineSavedAt: null,
   settings: { new_task: true, reminder: true, announcement: true, schedule: true, reminder_time: null },
   activeClass: 'all', loaded: false,
 };
@@ -39,7 +39,7 @@ async function fetchAll(build) {
 
 async function loadAll() {
   const uid = state.session.user.id;
-  const [profiles, classes, members, tasks, statuses, anns, scheds, notifs, acts, settings] = await Promise.all([
+  const [profiles, classes, members, tasks, statuses, anns, scheds, notifs, acts, settings, books] = await Promise.all([
     fetchAll(() => sb.from('profiles').select('*')),
     fetchAll(() => sb.from('classes').select('*').order('created_at')),
     fetchAll(() => sb.from('class_members').select('*')),
@@ -50,11 +50,14 @@ async function loadAll() {
     sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(200).then(r => { if (r.error) throw r.error; return r.data; }),
     sb.from('activity_logs').select('*').order('created_at', { ascending: false }).limit(500).then(r => { if (r.error) throw r.error; return r.data; }),
     sb.from('notification_settings').select('*').eq('user_id', uid).maybeSingle().then(r => r.data),
+    // Buku Dikumpul (sql/16): bila belum dijalankan, fitur lain tetap jalan
+    fetchAll(() => sb.from('book_collections').select('*').order('collected_at', { ascending: false })).then(rows => ({ ok: true, rows })).catch(() => ({ ok: false, rows: [] })),
   ]);
   state.profiles = new Map(profiles.map(p => [p.id, p]));
   state.me = state.profiles.get(uid);
   Object.assign(state, { classes, members, tasks, statuses, announcements: anns, schedules: scheds, notifications: notifs, activity: acts });
   if (settings) state.settings = settings;
+  state.books = books.rows; state.booksReady = books.ok;
   let saved = null; try { saved = localStorage.getItem('tk_class'); } catch {}
   state.activeClass = saved && (saved === 'all' || classes.some(c => c.id === saved)) ? saved : 'all';
   state.loaded = true;
@@ -92,7 +95,7 @@ const unreadCount = () => state.notifications.filter(n => !n.read_at).length;
 /* ===== Realtime ===== */
 const RT_KEYS = { task_status: r => r.task_id + '|' + r.student_id, class_members: r => r.class_id + '|' + r.user_id };
 const RT_LISTS = { tasks: 'tasks', task_status: 'statuses', announcements: 'announcements', schedules: 'schedules',
-                   notifications: 'notifications', activity_logs: 'activity', classes: 'classes', class_members: 'members' };
+                   notifications: 'notifications', activity_logs: 'activity', classes: 'classes', class_members: 'members', book_collections: 'books' };
 const keyOf = (table, r) => (RT_KEYS[table] || (x => x.id))(r);
 
 function applyChange(table, p) {
@@ -120,7 +123,7 @@ function subscribeRealtime() {
   setRTStatus('connecting');
   const uid = state.session.user.id;
   channel = sb.channel('tugasku-' + uid);
-  Object.keys(RT_LISTS).forEach(table => {
+  Object.keys(RT_LISTS).filter(t => t !== 'book_collections' || state.booksReady).forEach(table => {
     const cfg = { event: '*', schema: 'public', table };
     if (table === 'notifications') cfg.filter = `user_id=eq.${uid}`;
     channel.on('postgres_changes', cfg, async p => {
