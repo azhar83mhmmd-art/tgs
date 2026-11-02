@@ -2,6 +2,7 @@
   "name": "TugasKu",
   "short_name": "TugasKu",
   "description": "Pemberitahuan tugas & pengingat deadline sekolah",
+  "id": "./",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
